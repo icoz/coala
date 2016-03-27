@@ -160,3 +160,46 @@ class FunctionMetadata:
                    non_optional_params=non_optional_params,
                    optional_params=optional_params,
                    omit=omit)
+
+    @classmethod
+    def merge(cls, *metadatas):
+        """
+        Merges signatures of ``FunctionMetadata`` objects.
+
+        Parameter (either optional or non-optional) and non-parameter
+        descriptions are merged from left to right, meaning the right hand
+        metadata overrides the left hand one.
+
+        :param metadatas:
+            The sequence of metadatas to merge.
+        :return:
+            A ``FunctionMetadata`` object containing the merged signature of
+            all given metadatas.
+        """
+        # Collect the metadatas, as we operate on them more often and we want
+        # to support arbitrary sequences.
+        metadatas = tuple(metadatas)
+
+        merged_name = ("<Merged signature of " +
+                       ", ".join(repr(metadata.name)
+                                 for metadata in metadatas) +
+                       ">")
+
+        merged_desc = next((m.desc for m in reversed(metadatas) if m.desc), "")
+        merged_retval_desc = next(
+            (m.retval_desc for m in reversed(metadatas) if m.retval_desc), "")
+        merged_non_optional_params = {}
+        merged_optional_params = {}
+
+        for metadata in metadatas:
+            merged_non_optional_params.update(metadata.non_optional_params)
+            merged_optional_params.update(metadata.optional_params)
+
+        merged_omit = set.union(*(metadata.omit for metadata in metadatas))
+
+        return cls(merged_name,
+                   merged_desc,
+                   merged_retval_desc,
+                   merged_non_optional_params,
+                   merged_optional_params,
+                   merged_omit)
