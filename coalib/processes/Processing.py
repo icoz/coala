@@ -19,8 +19,10 @@ from coalib.results.result_actions.PrintDebugMessageAction import (
 from coalib.results.result_actions.ShowPatchAction import ShowPatchAction
 from coalib.results.RESULT_SEVERITY import RESULT_SEVERITY
 from coalib.results.SourceRange import SourceRange
+from coalib.settings.ConfigurationGathering import get_config_directory
 from coalib.settings.Setting import glob_list
 from coalib.parsing.Globbing import fnmatch
+from coalib.misc.Caching import add_to_changed_files
 
 ACTIONS = [ApplyPatchAction,
            PrintDebugMessageAction,
@@ -340,8 +342,19 @@ def instantiate_processes(section,
         glob_list(section.get('files', "")),
         log_printer,
         ignored_file_paths=glob_list(section.get('ignore', "")),
+        limit_file_paths=glob_list(section.get('limit_files', "")),
+        caching=section.get('caching', False),
+        project_dir=get_config_directory(section))
+    # This stores all matched files irrespective of whether coala is run
+    # only on changed files or not. Global bears require all the files.
+    complete_filename_list = collect_files(
+        glob_list(section.get('files', "")),
+        log_printer,
+        ignored_file_paths=glob_list(section.get('ignore', "")),
         limit_file_paths=glob_list(section.get('limit_files', "")))
+
     file_dict = get_file_dict(filename_list, log_printer)
+    complete_file_dict = get_file_dict(complete_filename_list, log_printer)
 
     manager = multiprocessing.Manager()
     global_bear_queue = multiprocessing.Queue()
@@ -366,7 +379,7 @@ def instantiate_processes(section,
         section,
         local_bear_list,
         global_bear_list,
-        file_dict,
+        complete_file_dict,
         message_queue)
 
     fill_queue(filename_queue, file_dict.keys())
@@ -434,6 +447,22 @@ def yield_ignore_ranges(file_dict):
                                            len(file[-1])))
 
 
+def get_file_list(results):
+    """
+    Get the list of files that are affected in the given results.
+
+    :param results: A list of results from which the list of files is to be
+                    extracted.
+    :return:        A list of file paths containing the mentioned list of
+                    files.
+    """
+    files = []
+    for result in results:
+        for code in result.affected_code:
+            files.append(code.file)
+    return files
+
+
 def process_queues(processes,
                    control_queue,
                    local_result_dict,
@@ -474,6 +503,7 @@ def process_queues(processes,
     local_processes = len(processes)
     global_processes = len(processes)
     global_result_buffer = []
+    result_files = set()
     ignore_ranges = list(yield_ignore_ranges(file_dict))
 
     # One process is the logger thread
@@ -487,6 +517,7 @@ def process_queues(processes,
                 global_processes -= 1
             elif control_elem == CONTROL_ELEMENT.LOCAL:
                 assert local_processes != 0
+                result_files.update(get_file_list(local_result_dict[index]))
                 retval, res = print_result(local_result_dict[index],
                                            file_dict,
                                            retval,
@@ -507,6 +538,7 @@ def process_queues(processes,
 
     # Flush global result buffer
     for elem in global_result_buffer:
+        result_files.update(get_file_list(global_result_dict[elem]))
         retval, res = print_result(global_result_dict[elem],
                                    file_dict,
                                    retval,
@@ -523,6 +555,7 @@ def process_queues(processes,
             control_elem, index = control_queue.get(timeout=0.1)
 
             if control_elem == CONTROL_ELEMENT.GLOBAL:
+                result_files.update(get_file_list(global_result_dict[index]))
                 retval, res = print_result(global_result_dict[index],
                                            file_dict,
                                            retval,
@@ -541,6 +574,8 @@ def process_queues(processes,
                 # nondeterministically covered.
                 break
 
+    add_to_changed_files(
+        log_printer, get_config_directory(section), result_files)
     return retval
 
 

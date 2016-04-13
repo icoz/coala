@@ -7,6 +7,8 @@ from coalib.collecting.Importers import iimport_objects
 from coalib.misc.Decorators import yield_once
 from coalib.output.printers.LOG_LEVEL import LOG_LEVEL
 from coalib.parsing.Globbing import fnmatch, iglob, glob_escape
+from coalib.misc.Caching import (
+    get_last_coala_run_time, add_new_files_since_last_run)
 
 
 def _get_kind(bear_class):
@@ -52,13 +54,16 @@ def icollect(file_paths, ignored_globs=None):
 
 
 def collect_files(file_paths, log_printer, ignored_file_paths=None,
-                  limit_file_paths=None):
+                  limit_file_paths=None, caching=False, project_dir=None):
     """
     Evaluate globs in file paths and return all matching files
 
     :param file_paths:         file path or list of such that can include globs
     :param ignored_file_paths: list of globs that match to-be-ignored files
     :param limit_file_paths:   list of globs that the files are limited to
+    :param caching:            collect only those files that have changed
+                               since the last time coala was run
+    :param project_dir:        the root directory of the project
     :return:                   list of paths of all matching files
     """
     limit_fnmatch = (functools.partial(fnmatch, patterns=limit_file_paths)
@@ -76,7 +81,39 @@ def collect_files(file_paths, log_printer, ignored_file_paths=None,
     _warn_if_unused_glob(log_printer, file_paths, file_globs_with_files,
                          "No files matching '{}' were found.")
     limited_files = list(filter(limit_fnmatch, collected_files))
-    return limited_files
+
+    changed_files = []
+    last_coala_run = get_last_coala_run_time(log_printer, project_dir)
+
+    if last_coala_run is None:
+        # The first time coala is run, the all files are new and must
+        # be returned irrespective of whether caching is turned on.
+        changed_files = limited_files
+        add_new_files_since_last_run(
+            log_printer,
+            project_dir,
+            None,
+            changed_files)
+    else:
+        new_files = []
+        for file_path in limited_files:
+            last_run = -1
+            if file_path in last_coala_run.keys():
+                last_run = last_coala_run[file_path]
+            else:
+                new_files.append(file_path)
+            if int(os.path.getmtime(file_path)) > last_run:
+                changed_files.append(file_path)
+        add_new_files_since_last_run(
+            log_printer,
+            project_dir,
+            last_coala_run,
+            new_files)
+
+    if caching:
+        return changed_files
+    else:
+        return limited_files
 
 
 def collect_dirs(dir_paths, ignored_dir_paths=None):

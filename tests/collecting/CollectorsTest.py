@@ -10,6 +10,8 @@ from coalib.collecting.Collectors import (
 from coalib.misc.ContextManagers import retrieve_stdout
 from coalib.output.printers.LogPrinter import LogPrinter
 from coalib.settings.Section import Section
+from coalib.misc.Caching import (
+    update_last_coala_run_time, add_new_files_since_last_run)
 
 
 class CollectFilesTest(unittest.TestCase):
@@ -30,6 +32,28 @@ class CollectFilesTest(unittest.TestCase):
             self.assertRegex(sio.getvalue(),
                              ".*\\[WARNING\\].*No files matching "
                              "'invalid_path' were found.\n")
+
+    def test_caching(self):
+        file_path = os.path.join(self.collectors_test_dir, "others", "test.c")
+        file_glob = os.path.join(os.path.dirname(file_path), "*.c")
+        add_new_files_since_last_run(
+            self.log_printer,
+            self.collectors_test_dir,
+            None,
+            [file_path])
+        open(file_path, "w").close()
+        files = collect_files([file_glob],
+                              self.log_printer,
+                              caching=True,
+                              project_dir=self.collectors_test_dir)
+        self.assertEqual(files, [os.path.normcase(file_path)])
+
+        update_last_coala_run_time(self.log_printer, self.collectors_test_dir)
+        files = collect_files([file_glob],
+                              self.log_printer,
+                              caching=True,
+                              project_dir=self.collectors_test_dir)
+        self.assertEqual(files, [])
 
     def test_file_collection(self):
         self.assertEqual(collect_files([os.path.join(self.collectors_test_dir,

@@ -9,6 +9,7 @@ from coalib.output.printers.LogPrinter import LogPrinter
 from coalib.output.Tagging import delete_tagged_results, tag_results
 from coalib.processes.Processing import execute_section, simplify_section_result
 from coalib.settings.ConfigurationGathering import gather_configuration
+from coalib.misc.Caching import update_last_coala_run_time
 
 do_nothing = lambda *args: True
 
@@ -90,6 +91,7 @@ def run_coala(log_printer=None,
             file_dicts[section_name] = section_result[3]
 
         tag_results(tag, config_file, results, log_printer)
+        update_last_coala_run_time(log_printer, config_file)
 
         if did_nothing:
             nothing_done(log_printer)

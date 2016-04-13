@@ -72,6 +72,12 @@ def default_arg_parser(formatter_class=None):
                             help='Files that will be analyzed will be '
                                  'restricted to those in the globs listed '
                                  'in this argument as well the files setting')
+    arg_parser.add_argument('--caching',
+                            nargs='?',
+                            const=True,
+                            metavar='BOOL',
+                            help='Run coala only on files that have changed '
+                                 'since the last time coala was run')
     arg_parser.add_argument('-b',
                             '--bears',
                             nargs='+',
