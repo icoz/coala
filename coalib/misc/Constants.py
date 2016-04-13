@@ -70,6 +70,8 @@ system_coafile = os.path.join(coalib_root, "default_coafile")
 user_coafile = os.path.join(os.path.expanduser("~"), ".coarc")
 
 default_coafile = ".coafile"
+caching_db = "caching_data"
+changed_files_db = "changed_files"
 
 TAGS_DIR = appdirs.user_data_dir('coala', version=VERSION)
 
