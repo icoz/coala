@@ -293,7 +293,13 @@ def Linter(executable: str,
     _prepare_options(options)
 
     def create_linter(klass):
-        class LinterBase(LocalBear):
+        class LinterMeta(type):
+
+            def __repr__(cls):
+                return "<{} linter class (wrapping {})>".format(
+                    cls.__name__, repr(options["executable"]))
+
+        class LinterBase(LocalBear, metaclass=LinterMeta):
 
             @staticmethod
             def generate_config(filename, file):
@@ -665,9 +671,6 @@ def Linter(executable: str,
         # Mixin the linter into the user-defined interface, otherwise
         # `create_arguments` and other methods would be overridden by the
         # default version.
-        class LinterClass(klass, LinterBase):
-            pass
-
-        return LinterClass
+        return type(klass.__name__, (klass, LinterBase), {})
 
     return create_linter
