@@ -107,6 +107,21 @@ class FunctionMetadataTest(unittest.TestCase):
         self.assertEqual(metadata.non_optional_params, non_optional_params)
         self.assertEqual(metadata.optional_params, optional_params)
 
+    def test_filter_parameters(self):
+        metadata = FunctionMetadata(
+            "A", "DESC", "RETURNS SOMETHING",
+            {"x": ("-1", None),
+             "y": ("-2", None),
+             "z": ("-3", None),
+             "w": ("-4", None)},
+            {"a": ("1", None, 1), "b": ("2", None, 2), "c": ("3", None, 3)},
+            {"y", })
+
+        self.assertEqual(
+            metadata.filter_parameters(
+                {"x": 50, "y": 60, "NOT_THERE": -100, "c": 20}),
+            {"x": 50, "c": 20})
+
     def test_merge(self):
         metadata1 = FunctionMetadata(
             "main",
