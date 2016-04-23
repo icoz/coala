@@ -471,6 +471,16 @@ class LinterComponentTest(unittest.TestCase):
         self.assertEqual(repr(DerivedLinter),
                          "<DerivedLinter linter class (wrapping 'my-tool')>")
 
+    def test_repr(self):
+        uut = (Linter(sys.executable)
+               (self.ManualProcessingTestLinter)
+               (self.section, None))
+
+        self.assertEqual(
+            repr(uut),
+            "<ManualProcessingTestLinter linter object (wrapping " +
+            repr(sys.executable) + ")>")
+
 
 class LinterReallifeTest(unittest.TestCase):
 
