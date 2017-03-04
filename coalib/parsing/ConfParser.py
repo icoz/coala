@@ -1,5 +1,7 @@
 import os
 from collections import OrderedDict
+from types import MappingProxyType
+import logging
 
 from coalib.misc import Constants
 from coalib.parsing.LineParser import LineParser
@@ -13,14 +15,15 @@ class ConfParser:
                  key_value_delimiters=('=',),
                  comment_seperators=('#',),
                  key_delimiters=(',', ' '),
-                 section_name_surroundings=None,
-                 remove_empty_iter_elements=True):
-        section_name_surroundings = section_name_surroundings or {"[": "]"}
-
-        self.line_parser = LineParser(key_value_delimiters,
-                                      comment_seperators,
-                                      key_delimiters,
-                                      section_name_surroundings)
+                 section_name_surroundings=MappingProxyType({'[': ']'}),
+                 remove_empty_iter_elements=True,
+                 key_value_append_delimiters=('+=',)):
+        self.line_parser = LineParser(
+            key_value_delimiters,
+            comment_seperators,
+            key_delimiters,
+            section_name_surroundings,
+            key_value_append_delimiters=key_value_append_delimiters)
 
         self.__remove_empty_iter_elements = remove_empty_iter_elements
 
@@ -45,7 +48,7 @@ class ConfParser:
         if os.path.isdir(input_data):
             input_data = os.path.join(input_data, Constants.default_coafile)
 
-        with open(input_data, "r", encoding='utf-8') as _file:
+        with open(input_data, 'r', encoding='utf-8') as _file:
             lines = _file.readlines()
 
         if overwrite:
@@ -64,8 +67,7 @@ class ConfParser:
         if not create_if_not_exists:
             raise IndexError
 
-        retval = self.sections[key] = Section(str(name),
-                                              self.sections["default"])
+        retval = self.sections[key] = Section(str(name))
         return retval
 
     @staticmethod
@@ -73,7 +75,7 @@ class ConfParser:
         return str(key).lower().strip()
 
     def __add_comment(self, section, comment, origin):
-        key = "comment" + str(self.__rand_helper)
+        key = 'comment' + str(self.__rand_helper)
         self.__rand_helper += 1
         section.append(Setting(
             key,
@@ -82,41 +84,56 @@ class ConfParser:
             remove_empty_iter_elements=self.__remove_empty_iter_elements))
 
     def __parse_lines(self, lines, origin):
-        current_section_name = "default"
+        current_section_name = 'default'
         current_section = self.get_section(current_section_name)
         current_keys = []
+        no_section = True
 
         for line in lines:
-            section_name, keys, value, comment = self.line_parser.parse(line)
+            (section_name,
+             keys,
+             value,
+             append,
+             comment) = self.line_parser._parse(line)
 
-            if comment != "":
+            if comment != '':
                 self.__add_comment(current_section, comment, origin)
 
-            if section_name != "":
+            if section_name != '':
+                no_section = False
                 current_section_name = section_name
                 current_section = self.get_section(current_section_name, True)
                 current_keys = []
                 continue
 
-            if comment == "" and keys == [] and value == "":
-                self.__add_comment(current_section, "", origin)
+            if comment == '' and keys == [] and value == '':
+                self.__add_comment(current_section, '', origin)
                 continue
 
             if keys != []:
                 current_keys = keys
 
             for section_override, key in current_keys:
-                if key == "":
+                if no_section:
+                    logging.warning('A setting does not have a section.'
+                                    'This is a deprecated feature please '
+                                    'put this setting in a section defined'
+                                    ' with `[<your-section-name]` in a '
+                                    'configuration file.')
+                if key == '':
                     continue
 
-                if section_override == "":
+                if section_override == '':
                     current_section.add_or_create_setting(
                         Setting(key,
                                 value,
                                 origin,
-                                # Ignore PEP8Bear, it fails to format that
+                                to_append=append,
+                                # Start ignoring PEP8Bear, PycodestyleBear*
+                                # they fail to resolve this
                                 remove_empty_iter_elements=
                                 self.__remove_empty_iter_elements),
+                                # Stop ignoring
                         allow_appending=(keys == []))
                 else:
                     self.get_section(
@@ -125,12 +142,15 @@ class ConfParser:
                             Setting(key,
                                     value,
                                     origin,
-                                    # Ignore PEP8Bear, it fails to format that
+                                    to_append=append,
+                                    # Start ignoring PEP8Bear, PycodestyleBear*
+                                    # they fail to resolve this
                                     remove_empty_iter_elements=
                                     self.__remove_empty_iter_elements),
+                                    # Stop ignoring
                             allow_appending=(keys == []))
 
     def __init_sections(self):
         self.sections = OrderedDict()
-        self.sections["default"] = Section("Default")
+        self.sections['default'] = Section('Default')
         self.__rand_helper = 0

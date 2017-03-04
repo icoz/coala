@@ -1,12 +1,12 @@
 import copy
 
-from coalib.misc.Decorators import (
+from coala_utils.decorators import (
     enforce_signature, generate_ordering, generate_repr)
 from coalib.results.TextPosition import TextPosition
 
 
-@generate_repr("start", "end")
-@generate_ordering("start", "end")
+@generate_repr('start', 'end')
+@generate_ordering('start', 'end')
 class TextRange:
 
     @enforce_signature
@@ -20,14 +20,15 @@ class TextRange:
                             ``None`` is given, the start object will be used
                             here.
         :raises TypeError:  Raised when
-                            - start is no TextPosition or None.
-                            - end is no TextPosition.
+                            - start is not of type TextPosition.
+                            - end is neither of type TextPosition, nor is it
+                              None.
         :raises ValueError: Raised when end position is smaller than start
                             position, because negative ranges are not allowed.
         """
 
         self._start = start
-        self._end = end or copy.deepcopy(start)
+        self._end = copy.deepcopy(start) if end is None else end
 
         if self._end < start:
             raise ValueError("End position can't be less than start position.")
@@ -71,11 +72,11 @@ class TextRange:
         """
         if not isinstance(a, cls) or not isinstance(b, cls):
             raise TypeError(
-                "only instances of {} can be joined".format(cls.__name__))
+                'only instances of {} can be joined'.format(cls.__name__))
 
         if not a.overlaps(b):
             raise ValueError(
-                    "{}s must overlap to be joined".format(cls.__name__))
+                '{}s must overlap to be joined'.format(cls.__name__))
 
         return cls(min(a.start, b.start), max(a.end, b.end))
 
@@ -104,12 +105,16 @@ class TextRange:
         :param text_lines: File contents of the applicable file
         :return:           TextRange with absolute values
         """
-        start_line = self.start.line or 1
-        start_column = self.start.column or 1
-        end_line = self.end.line or len(text_lines)
-        end_column = self.end.column or len(text_lines[end_line - 1])
+        start_line = 1 if self.start.line is None else self.start.line
+        start_column = 1 if self.start.column is None else self.start.column
+        end_line = len(text_lines) if self.end.line is None else self.end.line
+        end_column = (len(text_lines[end_line - 1]) if self.end.column is None
+                      else self.end.column)
 
         return TextRange.from_values(start_line,
                                      start_column,
                                      end_line,
                                      end_column)
+
+    def __contains__(self, item):
+        return item.start >= self.start and item.end <= self.end

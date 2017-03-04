@@ -1,20 +1,26 @@
+from collections import Iterable, namedtuple
+from glob import iglob
 import os.path
 
-from coalib.misc.Decorators import enforce_signature, generate_eq, generate_repr
+from coala_utils.decorators import (
+    enforce_signature, generate_eq, generate_repr)
 from coalib.parsing.ConfParser import ConfParser
 
 
 @generate_repr()
-@generate_eq("language", "docstyle", "markers")
+@generate_eq('language', 'docstyle', 'markers')
 class DocstyleDefinition:
     """
     The DocstyleDefinition class holds values that identify a certain type of
     documentation comment (for which language, documentation style/tool used
     etc.).
     """
+    Metadata = namedtuple('Metadata', ('param_start', 'param_end',
+                                       'return_sep'))
 
     @enforce_signature
-    def __init__(self, language: str, docstyle: str, markers):
+    def __init__(self, language: str, docstyle: str, markers: (Iterable, str),
+                 metadata: Metadata):
         """
         Instantiates a new DocstyleDefinition.
 
@@ -27,6 +33,11 @@ class DocstyleDefinition:
                          or a single marker/delimiter string iterable that
                          identify a documentation comment. See ``markers``
                          property for more details on markers.
+        :param metadata: A namedtuple consisting of certain attributes that
+                         form the layout of the certain documentation comment
+                         e.g. ``param_start`` defining the start symbol of
+                         the parameter fields and ``param_end`` defining the
+                         end.
         """
         self._language = language.lower()
         self._docstyle = docstyle.lower()
@@ -42,8 +53,10 @@ class DocstyleDefinition:
         for marker_set in self._markers:
             length = len(marker_set)
             if length != 3:
-                raise ValueError("Length of a given marker set was not 3 (was "
-                                 "actually {}).".format(length))
+                raise ValueError('Length of a given marker set was not 3 (was '
+                                 'actually {}).'.format(length))
+
+        self._metadata = metadata
 
     @property
     def language(self):
@@ -104,20 +117,38 @@ class DocstyleDefinition:
         """
         return self._markers
 
+    @property
+    def metadata(self):
+        """
+        A namedtuple of certain attributes present in the documentation.
+
+        These attributes are used to define parts of the documentation.
+        """
+        return self._metadata
+
     @classmethod
     @enforce_signature
-    def load(cls, language: str, docstyle: str):
+    def load(cls, language: str, docstyle: str, coalang_dir=None):
         """
         Loads a ``DocstyleDefinition`` from the coala docstyle definition files.
 
         This function considers all settings inside the according coalang-files
-        as markers.
+        as markers, except ``param_start``, ``param_end`` and ``return_sep``
+        which are considered as special metadata markers.
+
+        .. note::
+
+            When placing new coala docstyle definition files, these must
+            consist of only lowercase letters and end with ``.coalang``!
 
         :param language:           The case insensitive programming language of
                                    the documentation comment as a string.
         :param docstyle:           The case insensitive documentation
                                    style/tool used to document code, e.g.
                                    ``"default"`` or ``"doxygen"``.
+        :param coalang_dir:        Path to directory with coalang docstyle
+                                   definition files. This replaces the default
+                                   path if given.
         :raises FileNotFoundError: Raised when the given docstyle was not
                                    found.
         :raises KeyError:          Raised when the given language is not
@@ -129,24 +160,51 @@ class DocstyleDefinition:
         docstyle = docstyle.lower()
 
         language_config_parser = ConfParser(remove_empty_iter_elements=False)
+
+        coalang_file = os.path.join(
+            coalang_dir or os.path.dirname(__file__), docstyle + '.coalang')
+
         try:
-            docstyle_settings = language_config_parser.parse(
-                os.path.dirname(__file__) + "/" + docstyle + ".coalang")
+            docstyle_settings = language_config_parser.parse(coalang_file)
         except FileNotFoundError:
-            raise FileNotFoundError("Docstyle definition " + repr(docstyle) +
-                                    " not found.")
+            raise FileNotFoundError('Docstyle definition ' + repr(docstyle) +
+                                    ' not found.')
 
         language = language.lower()
 
         try:
             docstyle_settings = docstyle_settings[language]
         except KeyError:
-            raise KeyError("Language {} is not defined for docstyle {}."
-                           .format(repr(language), repr(docstyle)))
+            raise KeyError('Language {!r} is not defined for docstyle {!r}.'
+                           .format(language, docstyle))
+
+        metadata_settings = ('param_start', 'param_end', 'return_sep')
+
+        metadata = cls.Metadata(*(str(docstyle_settings.get(req_setting, ''))
+                                  for req_setting in metadata_settings))
 
         marker_sets = (tuple(value)
                        for key, value in
-                       filter(lambda kv: not kv[0].startswith("comment"),
-                              docstyle_settings.contents.items()))
+                       docstyle_settings.contents.items()
+                       if key not in metadata_settings and
+                       not key.startswith('comment'))
 
-        return cls(language, docstyle, marker_sets)
+        return cls(language, docstyle, marker_sets, metadata)
+
+    @staticmethod
+    def get_available_definitions():
+        """
+        Returns a sequence of pairs with ``(docstyle, language)`` which are
+        available when using ``load()``.
+
+        :return: A sequence of pairs with ``(docstyle, language)``.
+        """
+        language_config_parser = ConfParser(remove_empty_iter_elements=False)
+        pattern = os.path.join(os.path.dirname(__file__), '*.coalang')
+
+        for coalang_file in iglob(pattern):
+            docstyle = os.path.splitext(os.path.basename(coalang_file))[0]
+            # Ignore files that are not lowercase, as coalang files have to be.
+            if docstyle.lower() == docstyle:
+                for language in language_config_parser.parse(coalang_file):
+                    yield docstyle, language.lower()

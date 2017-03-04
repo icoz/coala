@@ -1,5 +1,5 @@
 from coalib.bearlib.abstractions.SectionCreatable import SectionCreatable
-from coalib.misc.Decorators import enforce_signature
+from coala_utils.decorators import enforce_signature
 
 
 class SpacingHelper(SectionCreatable):
@@ -87,34 +87,34 @@ class SpacingHelper(SectionCreatable):
         :return:     The converted string.
         """
         currspaces = 0
-        result = ""
+        result = ''
         # Tracking the index of the string isnt enough because tabs are
         # spanning over multiple columns
         tabless_position = 0
         for char in line:
-            if char == " ":
+            if char == ' ':
                 currspaces += 1
                 tabless_position += 1
-            elif char == "\t":
+            elif char == '\t':
                 space_count = (self.tab_width - tabless_position
                                % self.tab_width)
                 currspaces += space_count
                 tabless_position += space_count
             else:
-                result += currspaces*" " + char
+                result += currspaces*' ' + char
                 currspaces = 0
                 tabless_position += 1
 
             # tabless_position is now incremented to point _after_ the current
             # char
-            if tabless_position % self.tab_width == 0:
-                if currspaces > 1:
-                    result += "\t"
+            if tabless_position % self.tab_width == 0 and currspaces:
+                if currspaces == 1 and char == ' ':
+                    result += ' '
                 else:
-                    result += currspaces*" "
+                    result += '\t'
 
                 currspaces = 0
 
-        result += currspaces*" "
+        result += currspaces*' '
 
         return result

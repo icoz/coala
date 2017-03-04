@@ -3,21 +3,21 @@ A ResultAction is an action that is applicable to at least some results. This
 file serves the base class for all result actions, thus providing a unified
 interface for all actions.
 """
-from coalib.misc.Decorators import enforce_signature
+from coala_utils.decorators import enforce_signature
 from coalib.settings.FunctionMetadata import FunctionMetadata
 from coalib.settings.Section import Section
 
 
 class ResultAction:
 
-    success_message = "The action was executed successfully."
+    SUCCESS_MESSAGE = 'The action was executed successfully.'
 
     @staticmethod
     def is_applicable(result, original_file_dict, file_diff_dict):
         """
         Checks whether the Action is valid for the result type.
 
-        Returns ``True`` by default.
+        Returns ``True`` or a string containing the not_applicable message.
 
         :param result:             The result from the coala run to check if an
                                    Action is applicable.
@@ -33,8 +33,7 @@ class ResultAction:
 
     def apply(self, result, original_file_dict, file_diff_dict, **kwargs):
         """
-        This action has no description although it should. Probably something
-        went wrong.
+        No description. Something went wrong.
         """
         raise NotImplementedError
 
@@ -59,7 +58,7 @@ class ResultAction:
                                    need to use the return value.
         :param section:            The section where to retrieve the additional
                                    information.
-        :return                    The modified file_diff_dict.
+        :return:                   The modified file_diff_dict.
         """
         params = self.get_metadata().create_params_from_section(section)
         return self.apply(result, original_file_dict, file_diff_dict, **params)
@@ -77,7 +76,7 @@ class ResultAction:
         """
         data = FunctionMetadata.from_function(
             cls.apply,
-            omit={"self", "result", "original_file_dict", "file_diff_dict"})
+            omit={'self', 'result', 'original_file_dict', 'file_diff_dict'})
         data.name = cls.__name__
 
         return data

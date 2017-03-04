@@ -26,6 +26,7 @@ from coalib.results.SourceRange import SourceRange
 from coalib.settings.ConfigurationGathering import gather_configuration
 from coalib.settings.Section import Section
 from coalib.settings.Setting import Setting
+from coalib.misc.Caching import FileCache
 
 
 process_group_test_code = """
@@ -66,14 +67,15 @@ class ProcessingTest(unittest.TestCase):
     def setUp(self):
         config_path = os.path.abspath(os.path.join(
             os.path.dirname(__file__),
-            "section_executor_test_files",
-            ".coafile"))
+            'section_executor_test_files',
+            '.coafile'))
         self.testcode_c_path = os.path.join(os.path.dirname(config_path),
-                                            "testcode.c")
+                                            'testcode.c')
 
         self.result_queue = queue.Queue()
         self.queue = queue.Queue()
         self.log_queue = queue.Queue()
+        self.console_printer = ConsolePrinter()
         log_printer = LogPrinter(ConsolePrinter())
         self.log_printer = ProcessingTestLogPrinter(self.log_queue)
 
@@ -82,19 +84,22 @@ class ProcessingTest(unittest.TestCase):
          self.global_bears,
          targets) = gather_configuration(lambda *args: True,
                                          log_printer,
-                                         arg_list=["--config",
+                                         arg_list=['--config',
                                                    re.escape(config_path)])
-        self.assertEqual(len(self.local_bears["default"]), 1)
-        self.assertEqual(len(self.global_bears["default"]), 1)
+        self.assertEqual(len(self.local_bears['cli']), 1)
+        self.assertEqual(len(self.global_bears['cli']), 1)
         self.assertEqual(targets, [])
 
     def test_run(self):
-        self.sections['default'].append(Setting('jobs', "1"))
-        results = execute_section(self.sections["default"],
-                                  self.global_bears["default"],
-                                  self.local_bears["default"],
+        self.sections['cli'].append(Setting('jobs', '1'))
+        cache = FileCache(self.log_printer, 'coala_test', flush_cache=True)
+        results = execute_section(self.sections['cli'],
+                                  self.global_bears['cli'],
+                                  self.local_bears['cli'],
                                   lambda *args: self.result_queue.put(args[2]),
-                                  self.log_printer)
+                                  cache,
+                                  self.log_printer,
+                                  console_printer=self.console_printer)
         self.assertTrue(results[0])
 
         local_results = self.result_queue.get(timeout=0)
@@ -113,24 +118,34 @@ class ProcessingTest(unittest.TestCase):
         global_result = global_results[0]
 
         self.assertRegex(repr(local_result),
-                         "<Result object\\(id={}, origin='LocalTestBear', "
-                         "affected_code=\\(\\), severity=NORMAL, message='test"
-                         " msg'\\) at 0x[0-9a-fA-F]+>".format(
-                             hex(local_result.id)))
+                         "<Result object\\(id={}, origin='LocalTestBear', aff"
+                         'ected_code=\\(\\), severity=NORMAL, confidence=100'
+                         ", message='test msg', aspect=NoneType\\) at "
+                         '0x[0-9a-fA-F]+>'.format(hex(local_result.id)))
         self.assertRegex(repr(global_result),
                          "<Result object\\(id={}, origin='GlobalTestBear', "
-                         "affected_code=\\(.*start=.*file=.*section_executor_"
-                         "test_files.*line=None.*end=.*\\), severity=NORMAL, "
-                         "message='test message'\\) at "
-                         "0x[0-9a-fA-F]+>".format(hex(global_result.id)))
+                         'affected_code=\\(.*start=.*file=.*section_executor_'
+                         'test_files.*line=None.*end=.*\\), severity=NORMAL, c'
+                         "onfidence=100, message='test message', "
+                         'aspect=NoneType\\'
+                         ') at 0x[0-9a-fA-F]+>'.format(hex(global_result.id)))
 
     def test_empty_run(self):
-        self.sections['default'].append(Setting('jobs', "bogus!"))
-        results = execute_section(self.sections["default"],
+        execute_section(self.sections['cli'],
+                        [],
+                        [],
+                        lambda *args: self.result_queue.put(args[2]),
+                        None,
+                        self.log_printer,
+                        console_printer=self.console_printer)
+        self.sections['cli'].append(Setting('jobs', 'bogus!'))
+        results = execute_section(self.sections['cli'],
                                   [],
                                   [],
                                   lambda *args: self.result_queue.put(args[2]),
-                                  self.log_printer)
+                                  None,
+                                  self.log_printer,
+                                  console_printer=self.console_printer)
         # No results
         self.assertFalse(results[0])
         # One file
@@ -159,22 +174,22 @@ class ProcessingTest(unittest.TestCase):
         ctrlq.put((CONTROL_ELEMENT.GLOBAL, 1))
         ctrlq.put((CONTROL_ELEMENT.GLOBAL_FINISHED, None))
 
-        first_local = Result.from_values("o", "The first result.", file="f")
-        second_local = Result.from_values("ABear",
-                                          "The second result.",
-                                          file="f",
+        first_local = Result.from_values('o', 'The first result.', file='f')
+        second_local = Result.from_values('ABear',
+                                          'The second result.',
+                                          file='f',
                                           line=1)
-        third_local = Result.from_values("ABear",
-                                         "The second result.",
-                                         file="f",
+        third_local = Result.from_values('ABear',
+                                         'The second result.',
+                                         file='f',
                                          line=4)
-        fourth_local = Result.from_values("ABear",
-                                          "Another result.",
-                                          file="f",
+        fourth_local = Result.from_values('ABear',
+                                          'Another result.',
+                                          file='f',
                                           line=7)
-        first_global = Result("o", "The one and only global result.")
-        section = Section("")
-        section.append(Setting('min_severity', "normal"))
+        first_global = Result('o', 'The one and only global result.')
+        section = Section('')
+        section.append(Setting('min_severity', 'normal'))
         process_queues(
             [DummyProcess(control_queue=ctrlq) for i in range(3)],
             ctrlq,
@@ -183,24 +198,26 @@ class ProcessingTest(unittest.TestCase):
                  third_local,
                  # The following are to be ignored
                  Result('o', 'm', severity=RESULT_SEVERITY.INFO),
-                 Result.from_values("ABear", "u", "f", 2, 1),
-                 Result.from_values("ABear", "u", "f", 3, 1)],
+                 Result.from_values('ABear', 'u', 'f', 2, 1),
+                 Result.from_values('ABear', 'u', 'f', 3, 1)],
              2: [fourth_local,
                  # The following are to be ignored
-                 HiddenResult("t", "c"),
-                 Result.from_values("ABear", "u", "f", 5, 1),
-                 Result.from_values("ABear", "u", "f", 6, 1)]},
+                 HiddenResult('t', 'c'),
+                 Result.from_values('ABear', 'u', 'f', 5, 1),
+                 Result.from_values('ABear', 'u', 'f', 6, 1)]},
             {1: [first_global]},
-            {"f": ["first line  # stop ignoring, invalid ignore range\n",
-                   "second line  # ignore all\n",
-                   "third line\n",
-                   "fourth line\n",
-                   "# Start ignoring ABear, BBear and CBear\n",
-                   "# Stop ignoring\n",
-                   "seventh"]},
+            {'f': ['first line  # stop ignoring, invalid ignore range\n',
+                   'second line  # ignore all\n',
+                   'third line\n',
+                   "fourth line  # gnore shouldn't trigger without i!\n",
+                   '# Start ignoring ABear, BBear and CBear\n',
+                   '# Stop ignoring\n',
+                   'seventh']},
             lambda *args: self.queue.put(args[2]),
             section,
-            self.log_printer)
+            None,
+            self.log_printer,
+            self.console_printer)
 
         self.assertEqual(self.queue.get(timeout=0), ([first_local,
                                                       second_local,
@@ -220,8 +237,10 @@ class ProcessingTest(unittest.TestCase):
             [DummyProcess(ctrlq, starts_dead=True) for i in range(3)],
             ctrlq, {}, {}, {},
             lambda *args: self.queue.put(args[2]),
-            Section(""),
-            self.log_printer)
+            Section(''),
+            None,
+            self.log_printer,
+            self.console_printer)
         with self.assertRaises(queue.Empty):
             self.queue.get(timeout=0)
 
@@ -233,14 +252,16 @@ class ProcessingTest(unittest.TestCase):
             [DummyProcess(ctrlq, starts_dead=True) for i in range(3)],
             ctrlq, {}, {}, {},
             lambda *args: self.queue.put(args[2]),
-            Section(""),
-            self.log_printer)
+            Section(''),
+            None,
+            self.log_printer,
+            self.console_printer)
         with self.assertRaises(queue.Empty):
             self.queue.get(timeout=0)
 
     def test_create_process_group(self):
         p = create_process_group([sys.executable,
-                                  "-c",
+                                  '-c',
                                   process_group_test_code],
                                  stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
@@ -248,12 +269,12 @@ class ProcessingTest(unittest.TestCase):
         if retval != 0:
             for line in p.stderr:
                 print(line, end='')
-            raise Exception("Subprocess did not exit correctly")
+            raise Exception('Subprocess did not exit correctly')
         output = [i for i in p.stdout]
         p.stderr.close()
         p.stdout.close()
         pid, pgid = [int(i.strip()) for i_out in output for i in i_out.split()]
-        if platform.system() != "Windows":
+        if platform.system() != 'Windows':
             # There is no way of testing this on windows with the current
             # python modules subprocess and os
             self.assertEqual(p.pid, pgid)
@@ -296,21 +317,21 @@ class ProcessingTest(unittest.TestCase):
         self.assertEqual(len(file_dict), 1)
         self.assertEqual(type(file_dict[self.testcode_c_path]),
                          tuple,
-                         msg="files in file_dict should not be editable")
-        self.assertEqual("Files that will be checked:\n" + self.testcode_c_path,
+                         msg='files in file_dict should not be editable')
+        self.assertEqual('Files that will be checked:\n' + self.testcode_c_path,
                          self.log_printer.log_queue.get().message)
 
     def test_get_file_dict_non_existent_file(self):
-        file_dict = get_file_dict(["non_existent_file"], self.log_printer)
+        file_dict = get_file_dict(['non_existent_file'], self.log_printer)
         self.assertEqual(file_dict, {})
         self.assertIn(("Failed to read file 'non_existent_file' because of "
-                       "an unknown error."),
+                       'an unknown error.'),
                       self.log_printer.log_queue.get().message)
 
     def test_simplify_section_result(self):
         results = (True,
-                   {"file1": [Result("a", "b")], "file2": None},
-                   {"file3": [Result("a", "c")]},
+                   {'file1': [Result('a', 'b')], 'file2': None},
+                   {'file3': [Result('a', 'c')]},
                    None)
         yielded, yielded_unfixed, all_results = simplify_section_result(results)
         self.assertEqual(yielded, True)
@@ -318,10 +339,10 @@ class ProcessingTest(unittest.TestCase):
         self.assertEqual(len(all_results), 2)
 
     def test_ignore_results(self):
-        ranges = [([], SourceRange.from_values("f", 1, 1, 2, 2))]
-        result = Result.from_values("origin",
-                                    "message",
-                                    file="e",
+        ranges = [([], SourceRange.from_values('f', 1, 1, 2, 2))]
+        result = Result.from_values('origin (Something Specific)',
+                                    'message',
+                                    file='e',
                                     line=1,
                                     column=1,
                                     end_line=2,
@@ -329,55 +350,55 @@ class ProcessingTest(unittest.TestCase):
 
         self.assertFalse(check_result_ignore(result, ranges))
 
-        ranges.append(([], SourceRange.from_values("e", 2, 3, 3, 3)))
+        ranges.append(([], SourceRange.from_values('e', 2, 3, 3, 3)))
         self.assertFalse(check_result_ignore(result, ranges))
 
-        ranges.append(([], SourceRange.from_values("e", 1, 1, 2, 2)))
+        ranges.append(([], SourceRange.from_values('e', 1, 1, 2, 2)))
         self.assertTrue(check_result_ignore(result, ranges))
 
-        result1 = Result.from_values("origin", "message", file="e")
+        result1 = Result.from_values('origin', 'message', file='e')
         self.assertFalse(check_result_ignore(result1, ranges))
 
         ranges = [(['something', 'else', 'not origin'],
-                   SourceRange.from_values("e", 1, 1, 2, 2))]
+                   SourceRange.from_values('e', 1, 1, 2, 2))]
         self.assertFalse(check_result_ignore(result, ranges))
 
         ranges = [(['something', 'else', 'origin'],
-                   SourceRange.from_values("e", 1, 1, 2, 2))]
+                   SourceRange.from_values('e', 1, 1, 2, 2))]
         self.assertTrue(check_result_ignore(result, ranges))
 
     def test_ignore_glob(self):
-        result = Result.from_values("LineLengthBear",
-                                    "message",
-                                    file="d",
+        result = Result.from_values('LineLengthBear',
+                                    'message',
+                                    file='d',
                                     line=1,
                                     column=1,
                                     end_line=2,
                                     end_column=2)
-        ranges = [(["(line*|space*)", "py*"],
-                   SourceRange.from_values("d", 1, 1, 2, 2))]
+        ranges = [(['(line*|space*)', 'py*'],
+                   SourceRange.from_values('d', 1, 1, 2, 2))]
         self.assertTrue(check_result_ignore(result, ranges))
 
-        result = Result.from_values("SpaceConsistencyBear",
-                                    "message",
-                                    file="d",
+        result = Result.from_values('SpaceConsistencyBear',
+                                    'message',
+                                    file='d',
                                     line=1,
                                     column=1,
                                     end_line=2,
                                     end_column=2)
-        ranges = [(["(line*|space*)", "py*"],
-                   SourceRange.from_values("d", 1, 1, 2, 2))]
+        ranges = [(['(line*|space*)', 'py*'],
+                   SourceRange.from_values('d', 1, 1, 2, 2))]
         self.assertTrue(check_result_ignore(result, ranges))
 
-        result = Result.from_values("XMLBear",
-                                    "message",
-                                    file="d",
+        result = Result.from_values('XMLBear',
+                                    'message',
+                                    file='d',
                                     line=1,
                                     column=1,
                                     end_line=2,
                                     end_column=2)
-        ranges = [(["(line*|space*)", "py*"],
-                   SourceRange.from_values("d", 1, 1, 2, 2))]
+        ranges = [(['(line*|space*)', 'py*'],
+                   SourceRange.from_values('d', 1, 1, 2, 2))]
         self.assertFalse(check_result_ignore(result, ranges))
 
     def test_yield_ignore_ranges(self):
@@ -426,36 +447,82 @@ class ProcessingTest(unittest.TestCase):
             self.assertEqual(test_source_range.end.line, 2)
             self.assertEqual(test_source_range.end.column, 20)
 
+        test_file_dict_e = {'f':
+                            ('# Ignore all\n',
+                             'e_string = "This string should be ignored"\n')}
+        test_ignore_range_e = list(yield_ignore_ranges(test_file_dict_e))
+        for test_bears, test_source_range in test_ignore_range_e:
+            self.assertEqual(test_bears, [])
+            self.assertEqual(test_source_range.start.line, 1)
+            self.assertEqual(test_source_range.start.column, 1)
+            self.assertEqual(test_source_range.end.line, 2)
+            self.assertEqual(test_source_range.end.column, 43)
+
+        test_file_dict_n = {'f':
+                            ('# noqa nBear\n',
+                             'n_string = "This string should be ignored"\n')}
+        test_ignore_range_n = list(yield_ignore_ranges(test_file_dict_n))
+        for test_bears, test_source_range in test_ignore_range_n:
+            self.assertEqual(test_bears, ['nbear'])
+            self.assertEqual(test_source_range.start.line, 1)
+            self.assertEqual(test_source_range.start.column, 1)
+            self.assertEqual(test_source_range.end.line, 2)
+            self.assertEqual(test_source_range.end.column, 43)
+
+        test_file_dict_n = {'f':
+                            ('# noqa\n',
+                             'n_string = "This string should be ignored"\n')}
+        test_ignore_range_n = list(yield_ignore_ranges(test_file_dict_n))
+        for test_bears, test_source_range in test_ignore_range_n:
+            self.assertEqual(test_bears, [])
+            self.assertEqual(test_source_range.start.line, 1)
+            self.assertEqual(test_source_range.start.column, 1)
+            self.assertEqual(test_source_range.end.line, 2)
+            self.assertEqual(test_source_range.end.column, 43)
+
+        # This case was a bug.
+        test_file_dict_single_line = {'f': ('# ignore XBEAR',)}
+        test_ignore_range_single_line = list(yield_ignore_ranges(
+            test_file_dict_single_line))
+
+        self.assertEqual(len(test_ignore_range_single_line), 1)
+        bears, source_range = test_ignore_range_single_line[0]
+        self.assertEqual(bears, ['xbear'])
+        self.assertEqual(source_range.start.line, 1)
+        self.assertEqual(source_range.start.column, 1)
+        self.assertEqual(source_range.end.line, 1)
+        self.assertEqual(source_range.end.column, 14)
+
 
 class ProcessingTest_GetDefaultActions(unittest.TestCase):
 
     def setUp(self):
-        self.section = Section("X")
+        self.section = Section('X')
 
     def test_no_key(self):
         self.assertEqual(get_default_actions(self.section), ({}, {}))
 
     def test_no_value(self):
-        self.section.append(Setting("default_actions", ""))
+        self.section.append(Setting('default_actions', ''))
         self.assertEqual(get_default_actions(self.section), ({}, {}))
 
     def test_only_valid_actions(self):
         self.section.append(Setting(
-            "default_actions",
-            "MyBear: PrintDebugMessageAction, ValidBear: ApplyPatchAction"))
+            'default_actions',
+            'MyBear: PrintDebugMessageAction, ValidBear: ApplyPatchAction'))
         self.assertEqual(
             get_default_actions(self.section),
-            ({"MyBear": PrintDebugMessageAction,
-              "ValidBear": ApplyPatchAction},
+            ({'MyBear': PrintDebugMessageAction,
+              'ValidBear': ApplyPatchAction},
              {}))
 
     def test_valid_and_invalid_actions(self):
         self.section.append(Setting(
-            "default_actions",
-            "MyBear: INVALID_action, ValidBear: ApplyPatchAction, XBear: ABC"))
+            'default_actions',
+            'MyBear: INVALID_action, ValidBear: ApplyPatchAction, XBear: ABC'))
         self.assertEqual(get_default_actions(self.section),
-                         ({"ValidBear": ApplyPatchAction},
-                          {"MyBear": "INVALID_action", "XBear": "ABC"}))
+                         ({'ValidBear': ApplyPatchAction},
+                          {'MyBear': 'INVALID_action', 'XBear': 'ABC'}))
 
 
 class ProcessingTest_AutoapplyActions(unittest.TestCase):
@@ -464,10 +531,10 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
         self.log_queue = queue.Queue()
         self.log_printer = ProcessingTestLogPrinter(self.log_queue)
 
-        self.resultY = Result("YBear", "msg1")
-        self.resultZ = Result("ZBear", "msg2")
+        self.resultY = Result('YBear', 'msg1')
+        self.resultZ = Result('ZBear', 'msg2')
         self.results = [self.resultY, self.resultZ]
-        self.section = Section("A")
+        self.section = Section('A')
 
     def test_no_default_actions(self):
         ret = autoapply_actions(self.results,
@@ -479,8 +546,8 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
         self.assertTrue(self.log_queue.empty())
 
     def test_with_invalid_action(self):
-        self.section.append(Setting("default_actions",
-                                    "XBear: nonSENSE_action"))
+        self.section.append(Setting('default_actions',
+                                    'XBear: nonSENSE_action'))
         ret = autoapply_actions(self.results,
                                 {},
                                 {},
@@ -496,11 +563,13 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
         # Use a result where no default action is supplied for and another one
         # where the action is not applicable.
         old_is_applicable = ApplyPatchAction.is_applicable
-        ApplyPatchAction.is_applicable = lambda *args: False
+        ApplyPatchAction.is_applicable = (
+            lambda *args: 'The ApplyPatchAction cannot be applied'
+        )
 
         self.section.append(Setting(
-            "default_actions",
-            "NoBear: ApplyPatchAction, YBear: ApplyPatchAction"))
+            'default_actions',
+            'NoBear: ApplyPatchAction, YBear: ApplyPatchAction'))
         ret = autoapply_actions(self.results,
                                 {},
                                 {},
@@ -508,11 +577,19 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
                                 self.log_printer)
         self.assertEqual(ret, self.results)
         self.assertEqual(self.log_queue.get().message,
-                         "Selected default action 'ApplyPatchAction' for bear "
-                         "'YBear' is not applicable. Action not applied.")
+                         'YBear: The ApplyPatchAction cannot be applied')
         self.assertTrue(self.log_queue.empty())
 
         ApplyPatchAction.is_applicable = old_is_applicable
+
+        self.section.append(Setting(
+            'no_autoapply_warn', True))
+        autoapply_actions(self.results,
+                          {},
+                          {},
+                          self.section,
+                          self.log_printer)
+        self.assertTrue(self.log_queue.empty())
 
     def test_applicable_action(self):
         # Use a result whose action can be successfully applied.
@@ -521,11 +598,11 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
         class TestAction(ResultAction):
 
             def apply(self, *args, **kwargs):
-                log_printer.debug("ACTION APPLIED SUCCESSFULLY.")
+                log_printer.debug('ACTION APPLIED SUCCESSFULLY.')
 
         ACTIONS.append(TestAction)
 
-        self.section.append(Setting("default_actions", "ZBear: TestAction"))
+        self.section.append(Setting('default_actions', 'Z*: TestAction'))
         ret = autoapply_actions(self.results,
                                 {},
                                 {},
@@ -533,7 +610,7 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
                                 log_printer)
         self.assertEqual(ret, [self.resultY])
         self.assertEqual(self.log_queue.get().message,
-                         "ACTION APPLIED SUCCESSFULLY.")
+                         'ACTION APPLIED SUCCESSFULLY.')
         self.assertEqual(self.log_queue.get().message,
                          "Applied 'TestAction' "
                          "on the whole project from 'ZBear'.")
@@ -549,8 +626,8 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
 
         ACTIONS.append(FailingTestAction)
 
-        self.section.append(Setting("default_actions",
-                                    "YBear: FailingTestAction"))
+        self.section.append(Setting('default_actions',
+                                    'YBear: FailingTestAction'))
         ret = autoapply_actions(self.results,
                                 {},
                                 {},
@@ -563,7 +640,7 @@ class ProcessingTest_AutoapplyActions(unittest.TestCase):
         self.assertIn("YEAH THAT'S A FAILING BEAR",
                       self.log_queue.get().message)
         self.assertEqual(self.log_queue.get().message,
-                         "-> for result " + repr(self.resultY) + ".")
+                         '-> for result ' + repr(self.resultY) + '.')
         self.assertTrue(self.log_queue.empty())
 
         ACTIONS.pop()
@@ -574,12 +651,14 @@ class ProcessingTest_PrintResult(unittest.TestCase):
     def setUp(self):
         self.section = Section('name')
         self.log_printer = LogPrinter(ConsolePrinter(), log_level=0)
+        self.console_printer = ConsolePrinter()
 
     def test_autoapply_override(self):
         """
         Tests that the default_actions aren't automatically applied when the
         autoapply setting overrides that.
         """
+
         self.section.append(Setting('default_actions',
                                     'somebear: PrintDebugMessageAction'))
 
@@ -587,11 +666,6 @@ class ProcessingTest_PrintResult(unittest.TestCase):
         results = [5, HiddenResult('origin', []),
                    Result('somebear', 'message', debug_msg='debug')]
         retval, newres = print_result(results, {}, 0, lambda *args: None,
-                                      self.section, self.log_printer, {}, [])
+                                      self.section, self.log_printer, {}, [],
+                                      console_printer=self.console_printer)
         self.assertEqual(newres, [])
-
-        # Override and verify that result is unprocessed, i.e. not gone
-        self.section.append(Setting('autoapply', 'false'))
-        retval, newres = print_result(results, {}, 0, lambda *args: None,
-                                      self.section, self.log_printer, {}, [])
-        self.assertNotEqual(newres, [])

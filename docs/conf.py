@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # coala documentation build configuration file, created by
-# sphinx-quickstart on Wed Feb  3 16:49:01 2016.
+# sphinx-quickstart on Sun Nov  6 21:18:18 2016.
 #
 # This file is execfile()d with the current directory set to its
 # containing dir.
@@ -19,10 +19,7 @@ import os
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
-sys.path.insert(0, os.path.abspath('../'))
-
-# Import for version information
-from coalib.misc.Constants import VERSION
+sys.path.insert(0, os.path.abspath('..'))
 
 # -- General configuration ------------------------------------------------
 
@@ -34,6 +31,9 @@ from coalib.misc.Constants import VERSION
 # ones.
 extensions = [
     'sphinx.ext.autodoc',
+    'sphinx.ext.coverage',
+    'sphinx.ext.viewcode',
+    'sphinxarg.ext',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -50,15 +50,18 @@ source_suffix = '.rst'
 # The master toctree document.
 master_doc = 'index'
 
+from datetime import date
+YEAR = date.today().year
 # General information about the project.
 project = 'coala'
-copyright = '2016, The coala Developers'
+copyright = '{0}, The coala Developers'.format(YEAR)
 author = 'The coala Developers'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
+from coalib.misc.Constants import VERSION
 # The short X.Y version.
 version = VERSION
 # The full version, including alpha/beta/rc tags.
@@ -113,12 +116,20 @@ todo_include_todos = False
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'alabaster'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
-#html_theme_options = {}
+html_theme_options = {
+    'github_user': 'coala',
+    'github_repo': 'coala',
+    'github_banner': True,
+    'github_type': 'star',
+    'logo': '/images/coala_logo.svg',
+    'logo_name': True,
+}
+
 
 # Add any paths that contain custom themes here, relative to this directory.
 #html_theme_path = []
@@ -142,7 +153,7 @@ html_theme = 'sphinx_rtd_theme'
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = []
+html_static_path = ['_static/']
 
 # Add any extra paths that contain custom files (such as robots.txt or
 # .htaccess) here, relative to this directory. These files are copied
@@ -158,7 +169,15 @@ html_static_path = []
 #html_use_smartypants = True
 
 # Custom sidebar templates, maps document names to template names.
-#html_sidebars = {}
+html_sidebars = {
+    '**': [
+        'about.html',
+        'searchbox.html',
+        'navigation.html',
+        'relations.html',
+        'donate.html',
+    ]
+}
 
 # Additional templates that should be rendered to pages, maps page names to
 # template names.
@@ -287,3 +306,4 @@ texinfo_documents = [
 
 # If true, do not generate a @detailmenu in the "Top" node's menu.
 #texinfo_no_detailmenu = False
+

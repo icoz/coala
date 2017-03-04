@@ -1,8 +1,49 @@
 from contextlib import contextmanager
+import platform
 import shlex
 from subprocess import PIPE, Popen
+from shutil import which
 
-from coalib.parsing.StringProcessing import escape
+
+class ShellCommandResult(tuple):
+    """
+    The result of a :func:`coalib.misc.run_shell_command` call.
+
+    It is based on a ``(stdout, stderr)`` string tuple like it is returned
+    form ``subprocess.Popen.communicate`` and was originally returned from
+    :func:`coalib.misc.run_shell_command`. So it is backwards-compatible.
+
+    It additionally stores the return ``.code``:
+
+    >>> process = Popen(['python', '-c',
+    ...                  'import sys; print(sys.stdin.readline().strip() +'
+    ...                  '                  " processed")'],
+    ...                 stdin=PIPE, stdout=PIPE, stderr=PIPE,
+    ...                 universal_newlines=True)
+
+    >>> stdout, stderr = process.communicate(input='data')
+    >>> stderr
+    ''
+    >>> result = ShellCommandResult(process.returncode, stdout, stderr)
+    >>> result[0]
+    'data processed\\n'
+    >>> result[1]
+    ''
+    >>> result.code
+    0
+    """
+
+    def __new__(cls, code, stdout, stderr):
+        """
+        Creates the basic tuple from `stdout` and `stderr`.
+        """
+        return tuple.__new__(cls, (stdout, stderr))
+
+    def __init__(self, code, stdout, stderr):
+        """
+        Stores the return `code`.
+        """
+        self.code = code
 
 
 @contextmanager
@@ -52,24 +93,31 @@ def run_interactive_shell_command(command, **kwargs):
     :return:        A context manager yielding the process started from the
                     command.
     """
-    if not kwargs.get("shell", False) and isinstance(command, str):
+    if not kwargs.get('shell', False) and isinstance(command, str):
         command = shlex.split(command)
+    else:
+        command = list(command)
 
-    args = {"stdout": PIPE,
-            "stderr": PIPE,
-            "stdin": PIPE,
-            "universal_newlines": True}
+    if platform.system() == 'Windows':  # pragma: no cover
+        # subprocess doesn't implicitly look for .bat and .cmd scripts when
+        # running commands under Windows
+        command[0] = which(command[0])
+
+    args = {'stdout': PIPE,
+            'stderr': PIPE,
+            'stdin': PIPE,
+            'universal_newlines': True}
     args.update(kwargs)
 
     process = Popen(command, **args)
     try:
         yield process
     finally:
-        if args["stdout"] is PIPE:
+        if args['stdout'] is PIPE:
             process.stdout.close()
-        if args["stderr"] is PIPE:
+        if args['stderr'] is PIPE:
             process.stderr.close()
-        if args["stdin"] is PIPE:
+        if args['stdin'] is PIPE:
             process.stdin.close()
 
         process.wait()
@@ -96,7 +144,7 @@ def run_shell_command(command, stdin=None, **kwargs):
     """
     with run_interactive_shell_command(command, **kwargs) as p:
         ret = p.communicate(stdin)
-    return ret
+    return ShellCommandResult(p.returncode, *ret)
 
 
 def get_shell_type():  # pragma: no cover
@@ -109,52 +157,10 @@ def get_shell_type():  # pragma: no cover
              Powershell is detected, "cmd" if command prompt is been
              detected or "sh" if it's neither of these.
     """
-    out = run_shell_command("echo $host.name", shell=True)[0]
-    if out.strip() == "ConsoleHost":
-        return "powershell"
-    out = run_shell_command("echo $0", shell=True)[0]
-    if out.strip() == "$0":
-        return "cmd"
-    return "sh"
-
-
-def prepare_string_argument(string, shell=get_shell_type()):
-    """
-    Prepares a string argument for being passed as a parameter on shell.
-
-    On ``sh`` this function effectively encloses the given string
-    with quotes (either '' or "", depending on content).
-
-    :param string: The string to prepare for shell.
-    :param shell:  The shell platform to prepare string argument for.
-                   If it is not "sh" it will be ignored and return the
-                   given string without modification.
-    :return:       The shell-prepared string.
-    """
-    if shell == "sh":
-        return '"' + escape(string, '"') + '"'
-    else:
-        return string
-
-
-def escape_path_argument(path, shell=get_shell_type()):
-    """
-    Makes a raw path ready for using as parameter in a shell command (escapes
-    illegal characters, surrounds with quotes etc.).
-
-    :param path:  The path to make ready for shell.
-    :param shell: The shell platform to escape the path argument for. Possible
-                  values are "sh", "powershell", and "cmd" (others will be
-                  ignored and return the given path without modification).
-    :return:      The escaped path argument.
-    """
-    if shell == "cmd":
-        # If a quote (") occurs in path (which is illegal for NTFS file
-        # systems, but maybe for others), escape it by preceding it with
-        # a caret (^).
-        return '"' + escape(path, '"', '^') + '"'
-    elif shell == "sh":
-        return escape(path, " ")
-    else:
-        # Any other non-supported system doesn't get a path escape.
-        return path
+    out = run_shell_command('echo $host.name', shell=True)[0]
+    if out.strip() == 'ConsoleHost':
+        return 'powershell'
+    out = run_shell_command('echo $0', shell=True)[0]
+    if out.strip() == '$0':
+        return 'cmd'
+    return 'sh'

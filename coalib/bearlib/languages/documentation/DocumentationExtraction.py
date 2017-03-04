@@ -36,7 +36,8 @@ def _extract_doc_comment_simple(content, line, column, markers):
     while line < len(content):
         pos = content[line].find(markers[2])
         if pos == -1:
-            doc_comment += content[line][align_column:]
+            doc_comment += ('\n' if content[line][align_column:] == ''
+                            else content[line][align_column:])
         else:
             doc_comment += content[line][align_column:pos]
             return line, pos + len(markers[2]), doc_comment
@@ -80,11 +81,11 @@ def _extract_doc_comment_continuous(content, line, column, markers):
         if pos == -1:
             return line, 0, doc_comment
         else:
-            doc_comment += content[line][pos+marker_len:]
+            doc_comment += content[line][pos + marker_len:]
 
         line += 1
 
-    if content[line - 1][-1] == "\n":
+    if content[line - 1][-1] == '\n':
         column = 0
     else:
         # This case can appear on end-of-document without a ``\n``.
@@ -133,12 +134,13 @@ def _extract_doc_comment_standard(content, line, column, markers):
                 # If the first text occurrence is not the each-line marker
                 # now we violate the doc-comment layout.
                 return None
-            doc_comment += content[line][each_line_pos+len(markers[1]):]
+            doc_comment += content[line][each_line_pos + len(markers[1]):]
         else:
             # If no each-line marker found or it's located past the end marker:
             # extract no further and end the doc-comment.
             if each_line_pos != -1 and each_line_pos + 1 < pos:
-                doc_comment += content[line][each_line_pos+len(markers[1]):pos]
+                doc_comment += content[line][each_line_pos +
+                                             len(markers[1]):pos]
 
             return line, pos + len(markers[2]), doc_comment
 
@@ -161,7 +163,7 @@ def _extract_doc_comment(content, line, column, markers):
                     line, column and the extracted documentation. If not
                     matched, returns None.
     """
-    if markers[1] == "":
+    if markers[1] == '':
         # Extract and align to start marker.
         return _extract_doc_comment_simple(content, line, column, markers)
     elif markers[1] == markers[2]:
@@ -178,12 +180,15 @@ def _compile_multi_match_regex(strings):
     :param strings: The strings to match.
     :return:        A regex object.
     """
-    return re.compile("|".join(re.escape(s) for s in strings))
+    return re.compile('|'.join(re.escape(s) for s in strings))
 
 
-def _extract_doc_comment_from_line(content, line, column, regex, marker_dict):
-    begin_match = regex.search(content[line], column)
+def _extract_doc_comment_from_line(content, line, column, regex,
+                                   marker_dict, docstyle_definition):
+    cur_line = content[line]
+    begin_match = regex.search(cur_line, column)
     if begin_match:
+        indent = cur_line[:begin_match.start()]
         column = begin_match.end()
         for marker in marker_dict[begin_match.group()]:
             doc_comment = _extract_doc_comment(content, line, column, marker)
@@ -194,14 +199,15 @@ def _extract_doc_comment_from_line(content, line, column, regex, marker_dict):
                                             begin_match.start() + 1,
                                             end_line + 1,
                                             end_column + 1)
-                doc = DocumentationComment(documentation, marker, rng)
+                doc = DocumentationComment(documentation, docstyle_definition,
+                                           indent, marker, rng)
 
                 return end_line, end_column, doc
 
     return line + 1, 0, None
 
 
-def extract_documentation_with_markers(content, markers):
+def extract_documentation_with_markers(content, docstyle_definition):
     """
     Extracts all documentation texts inside the given source-code-string.
 
@@ -219,6 +225,8 @@ def extract_documentation_with_markers(content, markers):
     # begin sequence we initially want to search for in source code. Then
     # the possible found documentation match is processed further with the
     # rest markers.
+    markers = docstyle_definition.markers
+
     marker_dict = {}
     for marker_set in markers:
         if marker_set[0] not in marker_dict:
@@ -234,11 +242,13 @@ def extract_documentation_with_markers(content, markers):
     line = 0
     column = 0
     while line < len(content):
-        line, column, doc = _extract_doc_comment_from_line(content,
-                                                           line,
-                                                           column,
-                                                           begin_regex,
-                                                           marker_dict)
+        line, column, doc = _extract_doc_comment_from_line(
+            content,
+            line,
+            column,
+            begin_regex,
+            marker_dict,
+            docstyle_definition)
         if doc:
             yield doc
 
@@ -270,5 +280,4 @@ def extract_documentation(content, language, docstyle):
                                found in the content.
     """
     docstyle_definition = DocstyleDefinition.load(language, docstyle)
-    return extract_documentation_with_markers(content,
-                                              docstyle_definition.markers)
+    return extract_documentation_with_markers(content, docstyle_definition)

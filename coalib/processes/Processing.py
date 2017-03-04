@@ -1,19 +1,19 @@
+from itertools import chain
 import multiprocessing
 import os
 import platform
 import queue
 import subprocess
-from itertools import chain
 
-from coalib.collecting import Dependencies
 from coalib.collecting.Collectors import collect_files
-from coalib.misc.StringConverter import StringConverter
+from coala_utils.string_processing.StringConverter import StringConverter
 from coalib.output.printers.LOG_LEVEL import LOG_LEVEL
 from coalib.processes.BearRunning import run
 from coalib.processes.CONTROL_ELEMENT import CONTROL_ELEMENT
 from coalib.processes.LogPrinterThread import LogPrinterThread
 from coalib.results.Result import Result
 from coalib.results.result_actions.ApplyPatchAction import ApplyPatchAction
+from coalib.results.result_actions.IgnoreResultAction import IgnoreResultAction
 from coalib.results.result_actions.PrintDebugMessageAction import (
     PrintDebugMessageAction)
 from coalib.results.result_actions.ShowPatchAction import ShowPatchAction
@@ -22,9 +22,11 @@ from coalib.results.SourceRange import SourceRange
 from coalib.settings.Setting import glob_list
 from coalib.parsing.Globbing import fnmatch
 
+
 ACTIONS = [ApplyPatchAction,
            PrintDebugMessageAction,
-           ShowPatchAction]
+           ShowPatchAction,
+           IgnoreResultAction]
 
 
 def get_cpu_count():
@@ -51,12 +53,12 @@ def get_running_processes(processes):
 
 
 def create_process_group(command_array, **kwargs):
-    if platform.system() == "Windows":  # pragma: no cover
+    if platform.system() == 'Windows':  # pragma posix: no cover
         proc = subprocess.Popen(
             command_array,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             **kwargs)
-    else:
+    else:  # pragma nt: no cover
         proc = subprocess.Popen(command_array,
                                 preexec_fn=os.setsid,
                                 **kwargs)
@@ -73,7 +75,7 @@ def get_default_actions(section):
                        and invalid action names.
     """
     try:
-        default_actions = dict(section["default_actions"])
+        default_actions = dict(section['default_actions'])
     except IndexError:
         return {}, {}
 
@@ -112,12 +114,11 @@ def autoapply_actions(results,
     """
 
     default_actions, invalid_actions = get_default_actions(section)
-
+    no_autoapply_warn = bool(section.get('no_autoapply_warn', False))
     for bearname, actionname in invalid_actions.items():
-        log_printer.warn("Selected default action {} for bear {} does "
-                         "not exist. Ignoring action.".format(
-                             repr(actionname),
-                             repr(bearname)))
+        log_printer.warn('Selected default action {!r} for bear {!r} does '
+                         'not exist. Ignoring action.'.format(actionname,
+                                                              bearname))
 
     if len(default_actions) == 0:
         # There's nothing to auto-apply.
@@ -126,16 +127,21 @@ def autoapply_actions(results,
     not_processed_results = []
     for result in results:
         try:
+            # Match full bear names deterministically, prioritized!
             action = default_actions[result.origin]
         except KeyError:
-            not_processed_results.append(result)
-            continue
+            for bear_glob in default_actions:
+                if fnmatch(result.origin, bear_glob):
+                    action = default_actions[bear_glob]
+                    break
+            else:
+                not_processed_results.append(result)
+                continue
 
-        if not action.is_applicable(result, file_dict, file_diff_dict):
-            log_printer.warn("Selected default action {} for bear {} is not "
-                             "applicable. Action not applied.".format(
-                                 repr(action.get_metadata().name),
-                                 repr(result.origin)))
+        applicable = action.is_applicable(result, file_dict, file_diff_dict)
+        if applicable is not True:
+            if not no_autoapply_warn:
+                log_printer.warn('{}: {}'.format(result.origin, applicable))
             not_processed_results.append(result)
             continue
 
@@ -144,18 +150,17 @@ def autoapply_actions(results,
                                         file_dict,
                                         file_diff_dict,
                                         section)
-            log_printer.info("Applied {} on {} from {}.".format(
-                repr(action.get_metadata().name),
+            log_printer.info('Applied {!r} on {} from {!r}.'.format(
+                action.get_metadata().name,
                 result.location_repr(),
-                repr(result.origin)))
+                result.origin))
         except Exception as ex:
             not_processed_results.append(result)
             log_printer.log_exception(
-                "Failed to execute action {} with error: {}.".format(
-                    repr(action.get_metadata().name),
-                    ex),
+                'Failed to execute action {!r} with error: {}.'.format(
+                    action.get_metadata().name, ex),
                 ex)
-            log_printer.debug("-> for result " + repr(result) + ".")
+            log_printer.debug('-> for result ' + repr(result) + '.')
 
     return not_processed_results
 
@@ -163,6 +168,13 @@ def autoapply_actions(results,
 def check_result_ignore(result, ignore_ranges):
     """
     Determines if the result has to be ignored.
+
+    Any result will be ignored if its origin matches any bear names and its
+    SourceRange overlaps with the ignore range.
+
+    Note that everything after a space in the origin will be cut away, so the
+    user can ignore results with an origin like `CSecurityBear (buffer)` with
+    just `# Ignore CSecurityBear`.
 
     :param result:        The result that needs to be checked.
     :param ignore_ranges: A list of tuples, each containing a list of lower
@@ -173,7 +185,7 @@ def check_result_ignore(result, ignore_ranges):
     :return:              True if the result has to be ignored.
     """
     for bears, range in ignore_ranges:
-        orig = result.origin.lower()
+        orig = result.origin.lower().split(' ')[0]
         if (result.overlaps(range) and
                 (len(bears) == 0 or orig in bears or fnmatch(orig, bears))):
             return True
@@ -188,7 +200,8 @@ def print_result(results,
                  section,
                  log_printer,
                  file_diff_dict,
-                 ignore_ranges):
+                 ignore_ranges,
+                 console_printer):
     """
     Takes the results produced by each bear and gives them to the print_results
     method to present to the user.
@@ -206,6 +219,7 @@ def print_result(results,
                            diff objects as values.
     :param ignore_ranges:  A list of SourceRanges. Results that affect code in
                            any of those ranges will be ignored.
+    :param console_printer: Object to print messages on the console.
     :return:               Returns False if any results were yielded. Else
                            True.
     """
@@ -217,20 +231,18 @@ def print_result(results,
                           not check_result_ignore(result, ignore_ranges),
                           results))
 
-    if bool(section.get('autoapply', 'true')):
-        patched_results = autoapply_actions(results,
-                                            file_dict,
-                                            file_diff_dict,
-                                            section,
-                                            log_printer)
-    else:
-        patched_results = results
+    patched_results = autoapply_actions(results,
+                                        file_dict,
+                                        file_diff_dict,
+                                        section,
+                                        log_printer)
 
     print_results(log_printer,
                   section,
                   patched_results,
                   file_dict,
-                  file_diff_dict)
+                  file_diff_dict,
+                  console_printer)
     return retval or len(results) > 0, patched_results
 
 
@@ -246,21 +258,21 @@ def get_file_dict(filename_list, log_printer):
     file_dict = {}
     for filename in filename_list:
         try:
-            with open(filename, "r", encoding="utf-8") as _file:
+            with open(filename, 'r', encoding='utf-8') as _file:
                 file_dict[filename] = tuple(_file.readlines())
         except UnicodeDecodeError:
             log_printer.warn("Failed to read file '{}'. It seems to contain "
-                             "non-unicode characters. Leaving it "
-                             "out.".format(filename))
+                             'non-unicode characters. Leaving it '
+                             'out.'.format(filename))
         except OSError as exception:  # pragma: no cover
             log_printer.log_exception("Failed to read file '{}' because of "
-                                      "an unknown error. Leaving it "
-                                      "out.".format(filename),
+                                      'an unknown error. Leaving it '
+                                      'out.'.format(filename),
                                       exception,
                                       log_level=LOG_LEVEL.WARNING)
 
-    log_printer.debug("Files that will be checked:\n" +
-                      "\n".join(file_dict.keys()))
+    log_printer.debug('Files that will be checked:\n' +
+                      '\n'.join(file_dict.keys()))
     return file_dict
 
 
@@ -285,7 +297,8 @@ def instantiate_bears(section,
                       local_bear_list,
                       global_bear_list,
                       file_dict,
-                      message_queue):
+                      message_queue,
+                      console_printer):
     """
     Instantiates each bear with the arguments it needs.
 
@@ -296,6 +309,7 @@ def instantiate_bears(section,
                              contents.
     :param message_queue:    Queue responsible to maintain the messages
                              delivered by the bears.
+    :param console_printer:  Object to print messages on the console.
     :return:                 The local and global bear instance lists.
     """
     local_bear_list = [bear
@@ -322,7 +336,9 @@ def instantiate_processes(section,
                           local_bear_list,
                           global_bear_list,
                           job_count,
-                          log_printer):
+                          cache,
+                          log_printer,
+                          console_printer):
     """
     Instantiate the number of processes that will run bears which will be
     responsible for running bears in a multiprocessing environment.
@@ -331,17 +347,44 @@ def instantiate_processes(section,
     :param local_bear_list:  List of local bears belonging to the section.
     :param global_bear_list: List of global bears belonging to the section.
     :param job_count:        Max number of processes to create.
+    :param cache:            An instance of ``misc.Caching.FileCache`` to use as
+                             a file cache buffer.
     :param log_printer:      The log printer to warn to.
+    :param console_printer:  Object to print messages on the console.
     :return:                 A tuple containing a list of processes,
                              and the arguments passed to each process which are
                              the same for each object.
     """
     filename_list = collect_files(
-        glob_list(section.get('files', "")),
+        glob_list(section.get('files', '')),
         log_printer,
-        ignored_file_paths=glob_list(section.get('ignore', "")),
-        limit_file_paths=glob_list(section.get('limit_files', "")))
-    file_dict = get_file_dict(filename_list, log_printer)
+        ignored_file_paths=glob_list(section.get('ignore', '')),
+        limit_file_paths=glob_list(section.get('limit_files', '')))
+
+    # This stores all matched files irrespective of whether coala is run
+    # only on changed files or not. Global bears require all the files
+    complete_filename_list = filename_list
+
+    # Start tracking all the files
+    if cache:
+        cache.track_files(set(complete_filename_list))
+        changed_files = cache.get_uncached_files(
+            set(filename_list)) if cache else filename_list
+
+        # If caching is enabled then the local bears should process only the
+        # changed files.
+        log_printer.debug("coala is run only on changed files, bears' log "
+                          'messages from previous runs may not appear. You may '
+                          'use the `--flush-cache` flag to see them.')
+        filename_list = changed_files
+
+    # Note: the complete file dict is given as the file dict to bears and
+    # the whole project is accessible to every bear. However, local bears are
+    # run only for the changed files if caching is enabled.
+    complete_file_dict = get_file_dict(complete_filename_list, log_printer)
+    file_dict = {filename: complete_file_dict[filename]
+                 for filename in filename_list
+                 if filename in complete_file_dict}
 
     manager = multiprocessing.Manager()
     global_bear_queue = multiprocessing.Queue()
@@ -351,23 +394,24 @@ def instantiate_processes(section,
     message_queue = multiprocessing.Queue()
     control_queue = multiprocessing.Queue()
 
-    bear_runner_args = {"file_name_queue": filename_queue,
-                        "local_bear_list": local_bear_list,
-                        "global_bear_list": global_bear_list,
-                        "global_bear_queue": global_bear_queue,
-                        "file_dict": file_dict,
-                        "local_result_dict": local_result_dict,
-                        "global_result_dict": global_result_dict,
-                        "message_queue": message_queue,
-                        "control_queue": control_queue,
-                        "timeout": 0.1}
+    bear_runner_args = {'file_name_queue': filename_queue,
+                        'local_bear_list': local_bear_list,
+                        'global_bear_list': global_bear_list,
+                        'global_bear_queue': global_bear_queue,
+                        'file_dict': file_dict,
+                        'local_result_dict': local_result_dict,
+                        'global_result_dict': global_result_dict,
+                        'message_queue': message_queue,
+                        'control_queue': control_queue,
+                        'timeout': 0.1}
 
     local_bear_list[:], global_bear_list[:] = instantiate_bears(
         section,
         local_bear_list,
         global_bear_list,
-        file_dict,
-        message_queue)
+        complete_file_dict,
+        message_queue,
+        console_printer=console_printer)
 
     fill_queue(filename_queue, file_dict.keys())
     fill_queue(global_bear_queue, range(len(global_bear_list)))
@@ -387,7 +431,7 @@ def get_ignore_scope(line, keyword):
     :return:        A list of lower cased bearnames or an empty list (-> "all")
     """
     toignore = line[line.rfind(keyword) + len(keyword):]
-    if toignore.startswith("all"):
+    if toignore.startswith('all'):
         return []
     else:
         return list(StringConverter(toignore, list_delimiters=', '))
@@ -405,26 +449,36 @@ def yield_ignore_ranges(file_dict):
         bears = []
         stop_ignoring = False
         for line_number, line in enumerate(file, start=1):
-            line = line.lower()
-            if "start ignoring " in line:
-                start = line_number
-                bears = get_ignore_scope(line, "start ignoring ")
-            elif "stop ignoring" in line:
-                stop_ignoring = True
-                if start:
-                    yield (bears,
-                           SourceRange.from_values(filename,
-                                                   start,
-                                                   1,
-                                                   line_number,
-                                                   len(file[line_number-1])))
-            elif "ignore " in line:
-                yield (get_ignore_scope(line, "ignore "),
-                       SourceRange.from_values(filename,
-                                               line_number,
-                                               1,
-                                               line_number+1,
-                                               len(file[line_number])))
+            # Before lowering all lines ever read, first look for the biggest
+            # common substring, case sensitive: I*gnor*e, start i*gnor*ing,
+            # N*oqa*.
+            if 'gnor' in line or 'oqa' in line:
+                line = line.lower()
+                if 'start ignoring ' in line:
+                    start = line_number
+                    bears = get_ignore_scope(line, 'start ignoring ')
+                elif 'stop ignoring' in line:
+                    stop_ignoring = True
+                    if start:
+                        yield (bears,
+                               SourceRange.from_values(
+                                   filename,
+                                   start,
+                                   1,
+                                   line_number,
+                                   len(file[line_number-1])))
+
+                else:
+                    for ignore_stmt in ['ignore ', 'noqa ', 'noqa']:
+                        if ignore_stmt in line:
+                            end_line = min(line_number + 1, len(file))
+                            yield (get_ignore_scope(line, ignore_stmt),
+                                   SourceRange.from_values(
+                                       filename,
+                                       line_number, 1,
+                                       end_line, len(file[end_line-1])))
+                            break
+
         if stop_ignoring is False and start is not None:
             yield (bears,
                    SourceRange.from_values(filename,
@@ -434,6 +488,18 @@ def yield_ignore_ranges(file_dict):
                                            len(file[-1])))
 
 
+def get_file_list(results):
+    """
+    Get the set of files that are affected in the given results.
+
+    :param results: A list of results from which the list of files is to be
+                    extracted.
+    :return:        A set of file paths containing the mentioned list of
+                    files.
+    """
+    return {code.file for result in results for code in result.affected_code}
+
+
 def process_queues(processes,
                    control_queue,
                    local_result_dict,
@@ -441,9 +507,11 @@ def process_queues(processes,
                    file_dict,
                    print_results,
                    section,
-                   log_printer):
+                   cache,
+                   log_printer,
+                   console_printer):
     """
-    Iterate the control queue and send the results recieved to the print_result
+    Iterate the control queue and send the results received to the print_result
     method so that they can be presented to the user.
 
     :param processes:          List of processes which can be used to run
@@ -463,7 +531,9 @@ def process_queues(processes,
                                filename as keys.
     :param print_results:      Prints all given results appropriate to the
                                output medium.
-    :return:                   Return True if all bears execute succesfully and
+    :param cache:              An instance of ``misc.Caching.FileCache`` to use
+                               as a file cache buffer.
+    :return:                   Return True if all bears execute successfully and
                                Results were delivered to the user. Else False.
     """
     file_diff_dict = {}
@@ -474,6 +544,7 @@ def process_queues(processes,
     local_processes = len(processes)
     global_processes = len(processes)
     global_result_buffer = []
+    result_files = set()
     ignore_ranges = list(yield_ignore_ranges(file_dict))
 
     # One process is the logger thread
@@ -487,6 +558,7 @@ def process_queues(processes,
                 global_processes -= 1
             elif control_elem == CONTROL_ELEMENT.LOCAL:
                 assert local_processes != 0
+                result_files.update(get_file_list(local_result_dict[index]))
                 retval, res = print_result(local_result_dict[index],
                                            file_dict,
                                            retval,
@@ -494,7 +566,8 @@ def process_queues(processes,
                                            section,
                                            log_printer,
                                            file_diff_dict,
-                                           ignore_ranges)
+                                           ignore_ranges,
+                                           console_printer=console_printer)
                 local_result_dict[index] = res
             else:
                 assert control_elem == CONTROL_ELEMENT.GLOBAL
@@ -507,6 +580,7 @@ def process_queues(processes,
 
     # Flush global result buffer
     for elem in global_result_buffer:
+        result_files.update(get_file_list(global_result_dict[elem]))
         retval, res = print_result(global_result_dict[elem],
                                    file_dict,
                                    retval,
@@ -514,7 +588,8 @@ def process_queues(processes,
                                    section,
                                    log_printer,
                                    file_diff_dict,
-                                   ignore_ranges)
+                                   ignore_ranges,
+                                   console_printer=console_printer)
         global_result_dict[elem] = res
 
     # One process is the logger thread
@@ -523,6 +598,7 @@ def process_queues(processes,
             control_elem, index = control_queue.get(timeout=0.1)
 
             if control_elem == CONTROL_ELEMENT.GLOBAL:
+                result_files.update(get_file_list(global_result_dict[index]))
                 retval, res = print_result(global_result_dict[index],
                                            file_dict,
                                            retval,
@@ -530,7 +606,8 @@ def process_queues(processes,
                                            section,
                                            log_printer,
                                            file_diff_dict,
-                                           ignore_ranges)
+                                           ignore_ranges,
+                                           console_printer)
                 global_result_dict[index] = res
             else:
                 assert control_elem == CONTROL_ELEMENT.GLOBAL_FINISHED
@@ -541,6 +618,8 @@ def process_queues(processes,
                 # nondeterministically covered.
                 break
 
+    if cache:
+        cache.untrack_files(result_files)
     return retval
 
 
@@ -575,7 +654,9 @@ def execute_section(section,
                     global_bear_list,
                     local_bear_list,
                     print_results,
-                    log_printer):
+                    cache,
+                    log_printer,
+                    console_printer):
     """
     Executes the section with the given bears.
 
@@ -590,10 +671,15 @@ def execute_section(section,
 
     :param section:          The section to execute.
     :param global_bear_list: List of global bears belonging to the section.
+                             Dependencies are already resolved.
     :param local_bear_list:  List of local bears belonging to the section.
+                             Dependencies are already resolved.
     :param print_results:    Prints all given results appropriate to the
                              output medium.
+    :param cache:            An instance of ``misc.Caching.FileCache`` to use as
+                             a file cache buffer.
     :param log_printer:      The log_printer to warn to.
+    :param console_printer:  Object to print messages on the console.
     :return:                 Tuple containing a bool (True if results were
                              yielded, False otherwise), a Manager.dict
                              containing all local results(filenames are key)
@@ -601,14 +687,11 @@ def execute_section(section,
                              results (bear names are key) as well as the
                              file dictionary.
     """
-    local_bear_list = Dependencies.resolve(local_bear_list)
-    global_bear_list = Dependencies.resolve(global_bear_list)
-
     try:
         running_processes = int(section['jobs'])
     except ValueError:
         log_printer.warn("Unable to convert setting 'jobs' into a number. "
-                         "Falling back to CPU count.")
+                         'Falling back to CPU count.')
         running_processes = get_cpu_count()
     except IndexError:
         running_processes = get_cpu_count()
@@ -617,9 +700,11 @@ def execute_section(section,
                                                 local_bear_list,
                                                 global_bear_list,
                                                 running_processes,
-                                                log_printer)
+                                                cache,
+                                                log_printer,
+                                                console_printer=console_printer)
 
-    logger_thread = LogPrinterThread(arg_dict["message_queue"],
+    logger_thread = LogPrinterThread(arg_dict['message_queue'],
                                      log_printer)
     # Start and join the logger thread along with the processes to run bears
     processes.append(logger_thread)
@@ -629,16 +714,18 @@ def execute_section(section,
 
     try:
         return (process_queues(processes,
-                               arg_dict["control_queue"],
-                               arg_dict["local_result_dict"],
-                               arg_dict["global_result_dict"],
-                               arg_dict["file_dict"],
+                               arg_dict['control_queue'],
+                               arg_dict['local_result_dict'],
+                               arg_dict['global_result_dict'],
+                               arg_dict['file_dict'],
                                print_results,
                                section,
-                               log_printer),
-                arg_dict["local_result_dict"],
-                arg_dict["global_result_dict"],
-                arg_dict["file_dict"])
+                               cache,
+                               log_printer,
+                               console_printer=console_printer),
+                arg_dict['local_result_dict'],
+                arg_dict['global_result_dict'],
+                arg_dict['file_dict'])
     finally:
         logger_thread.running = False
 

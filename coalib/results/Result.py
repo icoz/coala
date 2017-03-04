@@ -1,30 +1,51 @@
 import uuid
 from os.path import relpath
 
-from coalib.misc.Decorators import (
+from coala_utils.decorators import (
     enforce_signature, generate_ordering, generate_repr, get_public_members)
+from coalib.bearlib.aspects import aspectbase
 from coalib.results.RESULT_SEVERITY import RESULT_SEVERITY
 from coalib.results.SourceRange import SourceRange
 
 
 # Omit additional info, debug message and diffs for brevity
-@generate_repr(("id", hex),
-               "origin",
-               "affected_code",
-               ("severity", RESULT_SEVERITY.reverse.get),
-               "message")
-@generate_ordering("affected_code",
-                   "severity",
-                   "origin",
-                   "message",
-                   "additional_info",
-                   "debug_msg",
-                   "diffs")
+@generate_repr(('id', hex),
+               'origin',
+               'affected_code',
+               ('severity', RESULT_SEVERITY.reverse.get),
+               'confidence',
+               'message',
+               ('aspect', lambda aspect: type(aspect).__qualname__))
+@generate_ordering('affected_code',
+                   'severity',
+                   'confidence',
+                   'origin',
+                   'message_base',
+                   'message_arguments',
+                   'aspect',
+                   'additional_info',
+                   'debug_msg')
 class Result:
     """
     A result is anything that has an origin and a message.
 
     Optionally it might affect a file.
+
+    Result messages can also have arguments. The message is python
+    style formatted with these arguments.
+
+    >>> r = Result('origin','{arg1} and {arg2}', \
+           message_arguments={'arg1': 'foo', 'arg2': 'bar'})
+    >>> r.message
+    'foo and bar'
+
+    Message arguments may be changed later. The result message
+    will also reflect these changes.
+
+    >>> r.message_arguments = {'arg1': 'spam', 'arg2': 'eggs'}
+    >>> r.message
+    'spam and eggs'
+
     """
 
     @enforce_signature
@@ -33,41 +54,80 @@ class Result:
                  message: str,
                  affected_code: (tuple, list)=(),
                  severity: int=RESULT_SEVERITY.NORMAL,
-                 additional_info: str="",
-                 debug_msg="",
-                 diffs: (dict, None)=None):
+                 additional_info: str='',
+                 debug_msg='',
+                 diffs: (dict, None)=None,
+                 confidence: int=100,
+                 aspect: (aspectbase, None)=None,
+                 message_arguments: dict={}):
         """
-        :param origin:          Class name or class of the creator of this
-                                object.
-        :param message:         Message to show with this result.
-        :param affected_code:   A tuple of SourceRange objects pointing to
-                                related positions in the source code.
-        :param severity:        Severity of this result.
-        :param additional_info: A long description holding additional
-                                information about the issue and/or how to fix
-                                it. You can use this like a manual entry for a
-                                category of issues.
-        :param debug_msg:       A message which may help the user find out why
-                                this result was yielded.
-        :param diffs:           A dictionary with filenames as key and a
-                                sequence of ``Diff`` objects associated with
-                                them as values.
+        :param origin:
+            Class name or creator object of this object.
+        :param message:
+            Base message to show with this result.
+        :param message_arguments:
+            Arguments to be provided to the base message
+        :param affected_code:
+            A tuple of SourceRange objects pointing to related positions in the
+            source code.
+        :param severity:
+            Severity of this result.
+        :param additional_info:
+            A long description holding additional information about the issue
+            and/or how to fix it. You can use this like a manual entry for a
+            category of issues.
+        :param debug_msg:
+            A message which may help the user find out why this result was
+            yielded.
+        :param diffs:
+            A dictionary with filename as key and ``Diff`` object
+            associated with it as value.
+        :param confidence:
+            A number between 0 and 100 describing the likelihood of this result
+            being a real issue.
+        :param aspect:
+            An aspectclass instance which this result is associated to.
+            Note that this should be a leaf of the aspect tree!
+            (If you have a node, spend some time figuring out which of
+            the leafs exactly your result belongs to.)
+        :raises ValueError:
+            Raised when confidence is not between 0 and 100.
+        :raises KeyError:
+            Raised when message_base can not be formatted with
+            message_arguments.
         """
-        origin = origin or ""
+        origin = origin or ''
         if not isinstance(origin, str):
             origin = origin.__class__.__name__
         if severity not in RESULT_SEVERITY.reverse:
-            raise ValueError("severity is no valid RESULT_SEVERITY")
+            raise ValueError('severity is not a valid RESULT_SEVERITY')
 
         self.origin = origin
-        self.message = message
+        self.message_base = message
+        self.message_arguments = message_arguments
+        if message_arguments:
+            self.message_base.format(**self.message_arguments)
         self.debug_msg = debug_msg
         self.additional_info = additional_info
         # Sorting is important for tuple comparison
         self.affected_code = tuple(sorted(affected_code))
         self.severity = severity
+        if confidence < 0 or confidence > 100:
+            raise ValueError('Value of confidence should be between 0 and 100.')
+        self.confidence = confidence
         self.diffs = diffs
         self.id = uuid.uuid4().int
+        self.aspect = aspect
+
+    @property
+    def message(self):
+        if not self.message_arguments:
+            return self.message_base
+        return self.message_base.format(**self.message_arguments)
+
+    @message.setter
+    def message(self, value: str):
+        self.message_base = value
 
     @classmethod
     @enforce_signature
@@ -80,32 +140,52 @@ class Result:
                     end_line: (int, None)=None,
                     end_column: (int, None)=None,
                     severity: int=RESULT_SEVERITY.NORMAL,
-                    additional_info: str="",
-                    debug_msg="",
-                    diffs: (dict, None)=None):
+                    additional_info: str='',
+                    debug_msg='',
+                    diffs: (dict, None)=None,
+                    confidence: int=100,
+                    aspect: (aspectbase, None)=None,
+                    message_arguments: dict={}):
         """
         Creates a result with only one SourceRange with the given start and end
         locations.
 
-        :param origin:          Class name or class of the creator of this
-                                object.
-        :param message:         A message to explain the result.
-        :param file:            The related file.
-        :param line:            The first related line in the file.
-                                (First line is 1)
-        :param column:          The column indicating the first character.
-                                (First character is 1)
-        :param end_line:        The last related line in the file.
-        :param end_column:      The column indicating the last character.
-        :param severity:        A RESULT_SEVERITY object.
-        :param debug_msg:       Another message for debugging purposes.
-        :param additional_info: A long description holding additional
-                                information about the issue and/or how to fix
-                                it. You can use this like a manual entry for a
-                                category of issues.
-        :param diffs:           A dictionary with filenames as key and a
-                                sequence of ``Diff`` objects associated with
-                                them as values.
+        :param origin:
+            Class name or creator object of this object.
+        :param message:
+            Base message to show with this result.
+        :param message_arguments:
+            Arguments to be provided to the base message
+        :param file:
+            The related file.
+        :param line:
+            The first related line in the file. (First line is 1)
+        :param column:
+            The column indicating the first character. (First character is 1)
+        :param end_line:
+            The last related line in the file.
+        :param end_column:
+            The column indicating the last character.
+        :param severity:
+            Severity of this result.
+        :param additional_info:
+            A long description holding additional information about the issue
+            and/or how to fix it. You can use this like a manual entry for a
+            category of issues.
+        :param debug_msg:
+            A message which may help the user find out why this result was
+            yielded.
+        :param diffs:
+            A dictionary with filename as key and ``Diff`` object
+            associated with it as value.
+        :param confidence:
+            A number between 0 and 100 describing the likelihood of this result
+            being a real issue.
+        :param aspect:
+            An Aspect object which this result is associated to. Note that this
+            should be a leaf of the aspect tree! (If you have a node, spend
+            some time figuring out which of the leafs exactly your result
+            belongs to.)
         """
         range = SourceRange.from_values(file,
                                         line,
@@ -119,7 +199,10 @@ class Result:
                    severity=severity,
                    additional_info=additional_info,
                    debug_msg=debug_msg,
-                   diffs=diffs)
+                   diffs=diffs,
+                   confidence=confidence,
+                   aspect=aspect,
+                   message_arguments=message_arguments)
 
     def to_string_dict(self):
         """
@@ -134,24 +217,27 @@ class Result:
         """
         retval = {}
 
-        members = ["id",
-                   "additional_info",
-                   "debug_msg",
-                   "message",
-                   "origin"]
+        members = ['id',
+                   'additional_info',
+                   'debug_msg',
+                   'message',
+                   'message_base',
+                   'message_arguments',
+                   'origin',
+                   'confidence']
 
         for member in members:
             value = getattr(self, member)
-            retval[member] = "" if value == None else str(value)
+            retval[member] = '' if value is None else str(value)
 
-        retval["severity"] = str(RESULT_SEVERITY.reverse.get(
-            self.severity, ""))
+        retval['severity'] = str(RESULT_SEVERITY.reverse.get(
+            self.severity, ''))
         if len(self.affected_code) > 0:
-            retval["file"] = self.affected_code[0].file
+            retval['file'] = self.affected_code[0].file
             line = self.affected_code[0].start.line
-            retval["line_nr"] = "" if line is None else str(line)
+            retval['line_nr'] = '' if line is None else str(line)
         else:
-            retval["file"], retval["line_nr"] = "", ""
+            retval['file'], retval['line_nr'] = '', ''
 
         return retval
 
@@ -164,8 +250,8 @@ class Result:
         :param file_dict: A dictionary containing all files with filename as
                           key and all lines a value. Will be modified.
         """
-        for filename in self.diffs:
-            file_dict[filename] = self.diffs[filename].modified
+        for filename, diff in self.diffs.items():
+            file_dict[filename] = diff.modified
 
     def __add__(self, other):
         """
@@ -207,11 +293,11 @@ class Result:
         the affected code of the result.
 
         :return: A string containing all of the affected files
-                 seperated by a comma.
+                 separated by a comma.
         """
 
         if not self.affected_code:
-            return "the whole project"
+            return 'the whole project'
 
         # Set important to exclude duplicate file names
         range_paths = set(sourcerange.file
@@ -225,4 +311,5 @@ class Result:
         if use_relpath and _dict['diffs']:
             _dict['diffs'] = {relpath(file): diff
                               for file, diff in _dict['diffs'].items()}
+        _dict['aspect'] = type(self.aspect).__qualname__
         return _dict

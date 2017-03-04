@@ -1,12 +1,12 @@
 from os.path import relpath, abspath
 
-from coalib.misc.Decorators import (
+from coala_utils.decorators import (
     enforce_signature, generate_ordering, generate_repr, get_public_members)
 from coalib.results.TextPosition import TextPosition
 
 
-@generate_repr("file", "line", "column")
-@generate_ordering("file", "line", "column")
+@generate_repr('file', 'line', 'column')
+@generate_ordering('file', 'line', 'column')
 class SourcePosition(TextPosition):
 
     @enforce_signature

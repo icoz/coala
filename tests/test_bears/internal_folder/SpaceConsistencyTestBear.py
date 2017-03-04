@@ -17,13 +17,13 @@ class SpaceConsistencyTestBear(LocalBear):
         Checks the space consistency for each line.
 
         :param use_spaces:                True if spaces are to be used instead
-                                          of tabs.
+                                          of tabs
         :param allow_trailing_whitespace: Whether to allow trailing whitespace
-                                          or not.
+                                          or not
         :param tab_width:                 Number of spaces representing one
-                                          tab.
+                                          tab
         :param enforce_newline_at_EOF:    Whether to enforce a newline at the
-                                          End Of File.
+                                          End Of File
         '''
         spacing_helper = SpacingHelper(tab_width)
         result_texts = []
@@ -36,36 +36,36 @@ class SpaceConsistencyTestBear(LocalBear):
                 # the last line could potentially not have one. So we don't
                 # need to check whether the current line_number is the last
                 # one.
-                if replacement[-1] != "\n":
-                    replacement += "\n"
-                    result_texts.append("No newline at EOF.")
+                if replacement[-1] != '\n':
+                    replacement += '\n'
+                    result_texts.append('No newline at EOF.')
 
             if not allow_trailing_whitespace:
-                replacement = replacement.rstrip(" \t\n") + "\n"
-                if replacement != line.rstrip("\n") + "\n":
-                    result_texts.append("Trailing whitespaces.")
+                replacement = replacement.rstrip(' \t\n') + '\n'
+                if replacement != line.rstrip('\n') + '\n':
+                    result_texts.append('Trailing whitespaces.')
 
             if use_spaces:
                 pre_replacement = replacement
                 replacement = spacing_helper.replace_tabs_with_spaces(
                     replacement)
                 if replacement != pre_replacement:
-                    result_texts.append("Tabs used instead of spaces.")
+                    result_texts.append('Tabs used instead of spaces.')
             else:
                 pre_replacement = replacement
                 replacement = spacing_helper.replace_spaces_with_tabs(
                     replacement)
                 if replacement != pre_replacement:
-                    result_texts.append("Spaces used instead of tabs.")
+                    result_texts.append('Spaces used instead of tabs.')
 
             if len(result_texts) > 0:
                 diff = Diff(file)
                 diff.change_line(line_number, line, replacement)
-                inconsistencies = "".join("\n- " + string
+                inconsistencies = ''.join('\n- ' + string
                                           for string in result_texts)
                 yield Result.from_values(
                     self,
-                    "Line contains following spacing inconsistencies:"
+                    'Line contains following spacing inconsistencies:'
                     + inconsistencies,
                     diffs={filename: diff},
                     file=filename,

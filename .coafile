@@ -1,7 +1,7 @@
 [Default]
 files = *.py, coalib/**/*.py, ./coala, tests/**/*.py
 ignore =
-    tests/bearlib/languages/documentation/documentation_extraction_testdata/data.py,
+    tests/bearlib/languages/documentation/documentation_extraction_testdata/*.py,
     tests/collecting/collectors_test_dir/bears/incorrect_bear.py,
 
 max_line_length = 80
@@ -12,33 +12,35 @@ use_spaces = True
 # will be executed sequentially; also we need the LineLengthBear to double
 # check the line length because PEP8Bear sometimes isn't able to correct the
 # linelength.
-bears = SpaceConsistencyBear, PyUnusedCodeBear
+bears = SpaceConsistencyBear, PyUnusedCodeBear, QuotesBear
+language = Python
+preferred_quotation = '
 
-default_actions =
-    SpaceConsistencyBear: ApplyPatchAction,
-    PyUnusedCodeBear: ApplyPatchAction
+default_actions = *: ApplyPatchAction
 
 [autopep8]
-bears = PEP8Bear
+bears = PEP8Bear, PycodestyleBear
 
 default_actions = PEP8Bear: ApplyPatchAction
 
 [linelength]  # Sometimes autopep8 makes too long lines, need to check after!
 bears = LineLengthBear
+ignore_length_regex = ^.*https?://
 
 [DOCS]
 bears = SpaceConsistencyBear, LineLengthBear
 
-files = docs/**/*.rst, CONTRIBUTING.md, README.rst
+files = docs/**/*.rst, CONTRIBUTING.rst, README.rst
 ignore = docs/API/**
 ignore_length_regex = ^.*https?://
-default_actions = SpaceConsistencyBear: ApplyPatchAction
+
+default_actions = SpaceConsistencyBear: ApplyPatchAction 
 
 [languagetool]
 enabled = False
 
 bears = LanguageToolBear
-files = docs/**/*.rst, CONTRIBUTING.md, README.rst
+files = docs/**/*.rst, CONTRIBUTING.rst, README.rst
 ignore = docs/API/**
 languagetool_disable_rules =
     EN_QUOTES,                          # `` for links in rst files
@@ -59,6 +61,8 @@ languagetool_disable_rules =
 
 [commit]
 bears = GitCommitBear
+shortlog_trailing_period = False
+shortlog_regex = ([^:]*|[^:]+[^ ]: [A-Z0-9*].*)
 
 [Pylint]
 enabled = False
@@ -85,6 +89,7 @@ pylint_disable = missing-docstring, # Lots of functions don't need docstrings
 enabled = False
 
 bears = LineCountBear
+max_lines_per_file = 1000
 
 [invalidlinks]
 enabled = False
@@ -92,10 +97,32 @@ files = docs/**/*.rst
 ignore = docs/API
 bears = InvalidLinkBear
 
+[css]
+bears = CSSLintBear
+files = docs/_static/**.css
+
+[rst]
+bears = reSTLintBear
+files = README.rst
+
+[text]
+bears = SpaceConsistencyBear
+files =
+    LICENSE, ISSUE_TEMPLATE, PULL_REQUEST_TEMPLATE.md, MANIFEST.in,
+    **.sh, .travis.yml, circle.yml, setup.cfg, ./docs/_static/custom.css
+ignore = node_modules/**
+
 [TODOS]
 enabled = False
 
 bears = KeywordBear
+language = python 3
 
-ci_keywords = \#TODO, \# TODO, \#FIXME, \# FIXME
+ci_keywords, keywords = \#TODO, \# TODO, \#FIXME, \# FIXME
 cs_keywords =
+
+[urllib]
+# Encourage usage of requests library by blacklisting usage of urlopen()
+bears = KeywordBear
+language = python 3
+keywords = urlopen

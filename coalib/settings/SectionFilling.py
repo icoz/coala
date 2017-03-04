@@ -1,8 +1,8 @@
 import copy
 
 from coalib.bears.BEAR_KIND import BEAR_KIND
+from coalib.collecting import Dependencies
 from coalib.collecting.Collectors import collect_bears
-from coalib.output.printers.LOG_LEVEL import LOG_LEVEL
 from coalib.settings.Setting import Setting
 
 
@@ -10,6 +10,8 @@ def fill_settings(sections, acquire_settings, log_printer):
     """
     Retrieves all bears and requests missing settings via the given
     acquire_settings method.
+
+    This will retrieve all bears and their dependencies.
 
     :param sections:         The sections to fill up, modified in place.
     :param acquire_settings: The method to use for requesting settings. It will
@@ -27,12 +29,14 @@ def fill_settings(sections, acquire_settings, log_printer):
 
     for section_name, section in sections.items():
         bear_dirs = section.bear_dirs()
-        bears = list(section.get("bears", ""))
+        bears = list(section.get('bears', ''))
         section_local_bears, section_global_bears = collect_bears(
             bear_dirs,
             bears,
             [BEAR_KIND.LOCAL, BEAR_KIND.GLOBAL],
             log_printer)
+        section_local_bears = Dependencies.resolve(section_local_bears)
+        section_global_bears = Dependencies.resolve(section_global_bears)
         all_bears = copy.deepcopy(section_local_bears)
         all_bears.extend(section_global_bears)
         fill_section(section, acquire_settings, log_printer, all_bears)
@@ -65,29 +69,23 @@ def fill_section(section, acquire_settings, log_printer, bears):
     # Retrieve needed settings.
     prel_needed_settings = {}
     for bear in bears:
-        if not hasattr(bear, "get_non_optional_settings"):
-            log_printer.log(
-                LOG_LEVEL.WARNING,
-                "One of the given bears ({}) has no attribute "
-                "get_non_optional_settings.".format(str(bear)))
-        else:
-            needed = bear.get_non_optional_settings()
-            for key in needed:
-                if key in prel_needed_settings:
-                    prel_needed_settings[key].append(bear.name)
-                else:
-                    prel_needed_settings[key] = [needed[key][0],
-                                                 bear.name]
+        needed = bear.get_non_optional_settings()
+        for key in needed:
+            if key in prel_needed_settings:
+                prel_needed_settings[key].append(bear.name)
+            else:
+                prel_needed_settings[key] = [needed[key][0],
+                                             bear.name]
 
     # Strip away existent settings.
     needed_settings = {}
     for setting, help_text in prel_needed_settings.items():
-        if not setting in section:
+        if setting not in section:
             needed_settings[setting] = help_text
 
     # Get missing ones.
     if len(needed_settings) > 0:
-        new_vals = acquire_settings(log_printer, needed_settings)
+        new_vals = acquire_settings(log_printer, needed_settings, section)
         for setting, help_text in new_vals.items():
             section.append(Setting(setting, help_text))
 

@@ -1,5 +1,5 @@
 from coalib.results.TextPosition import TextPosition
-from coalib.misc.Decorators import enforce_signature
+from coala_utils.decorators import enforce_signature
 
 
 class AbsolutePosition(TextPosition):
@@ -60,4 +60,4 @@ def calc_line_col(text, position):
             return linenum, position + 1
         position -= linelen
 
-    raise ValueError("Position not found in text")
+    raise ValueError('Position not found in text')

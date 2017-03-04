@@ -1,8 +1,8 @@
 import os
 from collections import OrderedDict
 
-from coalib.misc.Decorators import generate_repr
-from coalib.misc.StringConverter import StringConverter
+from coala_utils.decorators import generate_repr
+from coala_utils.string_processing.StringConverter import StringConverter
 from coalib.parsing.Globbing import glob_escape
 
 
@@ -66,7 +66,7 @@ def typed_dict(key_type, value_type, default):
     """
     return lambda setting: {
         key_type(StringConverter(key)):
-        value_type(StringConverter(value)) if value != "" else default
+        value_type(StringConverter(value)) if value != '' else default
         for key, value in dict(setting).items()}
 
 
@@ -82,11 +82,11 @@ def typed_ordered_dict(key_type, value_type, default):
     """
     return lambda setting: OrderedDict(
         (key_type(StringConverter(key)),
-         value_type(StringConverter(value)) if value != "" else default)
+         value_type(StringConverter(value)) if value != '' else default)
         for key, value in OrderedDict(setting).items())
 
 
-@generate_repr("key", "value", "origin", "from_cli")
+@generate_repr('key', 'value', 'origin', 'from_cli', 'to_append')
 class Setting(StringConverter):
     """
     A Setting consists mainly of a key and a value. It mainly offers many
@@ -96,11 +96,12 @@ class Setting(StringConverter):
     def __init__(self,
                  key,
                  value,
-                 origin="",
+                 origin='',
                  strip_whitespaces=True,
-                 list_delimiters=(",", ";"),
+                 list_delimiters=(',', ';'),
                  from_cli=False,
-                 remove_empty_iter_elements=True):
+                 remove_empty_iter_elements=True,
+                 to_append=False):
         """
         Initializes a new Setting,
 
@@ -121,9 +122,17 @@ class Setting(StringConverter):
                                            CliParser.
         :param remove_empty_iter_elements: Whether to remove empty elements in
                                            iterable values.
+        :param to_append:                  The boolean value if setting value
+                                           needs to be appended to a setting in
+                                           the defaults of a section.
         """
         if not isinstance(from_cli, bool):
-            raise TypeError("from_cli needs to be a boolean value.")
+            raise TypeError('from_cli needs to be a boolean value.')
+
+        if not isinstance(to_append, bool):
+            raise TypeError('to_append needs to be a boolean value.')
+
+        self.to_append = to_append
 
         StringConverter.__init__(
             self,
@@ -158,11 +167,11 @@ class Setting(StringConverter):
         if os.path.isabs(strrep):
             return strrep
 
-        if hasattr(self, "origin") and self.origin != "":
+        if hasattr(self, 'origin') and self.origin != '':
             origin = self.origin
 
         if origin is None:
-            raise ValueError("Cannot determine path without origin.")
+            raise ValueError('Cannot determine path without origin.')
 
         # We need to get full path before escaping since the full path
         # may introduce unintended glob characters
@@ -208,6 +217,13 @@ class Setting(StringConverter):
         """
         return [Setting.__glob__(elem, self.origin) for elem in self]
 
+    def __iter__(self, remove_backslashes=True):
+        if self.to_append:
+            raise ValueError('Iteration on this object is invalid because the '
+                             'value is incomplete. Please access the value of '
+                             'the setting in a section to iterate through it.')
+        return StringConverter.__iter__(self, remove_backslashes)
+
     @property
     def key(self):
         return self._key
@@ -215,7 +231,15 @@ class Setting(StringConverter):
     @key.setter
     def key(self, key):
         newkey = str(key)
-        if newkey == "":
-            raise ValueError("An empty key is not allowed for a setting.")
+        if newkey == '':
+            raise ValueError('An empty key is not allowed for a setting.')
 
         self._key = newkey
+
+    @StringConverter.value.getter
+    def value(self):
+        if self.to_append:
+            raise ValueError('This property is invalid because the value is '
+                             'incomplete. Please access the value of the '
+                             'setting in a section to get the complete value.')
+        return self._value

@@ -11,50 +11,74 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import functools
-
 from pyprint.ConsolePrinter import ConsolePrinter
 
-from coalib.coala_main import run_coala
-from coalib.collecting.Collectors import collect_all_bears_from_sections
-from coalib.output.ConsoleInteraction import (
-    acquire_settings, nothing_done, print_results, print_section_beginning,
-    show_bears)
+from coalib.output.Logging import configure_logging
 from coalib.output.printers.LogPrinter import LogPrinter
 from coalib.parsing.DefaultArgParser import default_arg_parser
-from coalib.settings.ConfigurationGathering import load_configuration
-from coalib.settings.SectionFilling import fill_settings
+from coalib.misc.Exceptions import get_exitcode
 
 
 def main():
-    # Note: We parse the args here once to check whether to show bears or not.
-    arg_parser = default_arg_parser()
-    args = arg_parser.parse_args()
+    configure_logging()
 
-    console_printer = ConsolePrinter()
-    if args.show_bears or args.show_all_bears:
+    try:
+        console_printer = ConsolePrinter()
         log_printer = LogPrinter(console_printer)
-        sections, _ = load_configuration(arg_list=None, log_printer=log_printer)
-        if args.show_all_bears:
-            local_bears, global_bears = collect_all_bears_from_sections(
-                sections, log_printer)
-        else:
-            # We ignore missing settings as it's not important.
-            local_bears, global_bears = fill_settings(
-                sections,
-                acquire_settings=lambda *args, **kwargs: {},
-                log_printer=log_printer)
-        show_bears(local_bears, global_bears, args.show_all_bears,
-                   console_printer)
-        return 0
+        # Note: We parse the args here once to check whether to show bears or
+        # not.
+        args = default_arg_parser().parse_args()
 
-    partial_print_sec_beg = functools.partial(
-        print_section_beginning,
-        console_printer)
-    results, exitcode, _ = run_coala(
-        print_results=print_results,
-        acquire_settings=acquire_settings,
-        print_section_beginning=partial_print_sec_beg,
-        nothing_done=nothing_done)
+        # Defer imports so if e.g. --help is called they won't be run
+        from coalib.coala_modes import (
+            mode_format, mode_json, mode_non_interactive, mode_normal)
+        from coalib.output.ConsoleInteraction import (
+            show_bears, show_language_bears_capabilities)
 
-    return exitcode
+        console_printer = ConsolePrinter(print_colored=not args.no_color)
+
+        if args.json:  # needs to be checked in order to display bears in json
+            return mode_json(args)
+
+        if args.show_bears:
+            from coalib.settings.ConfigurationGathering import (
+                get_filtered_bears)
+
+            local_bears, global_bears = get_filtered_bears(
+                args.filter_by_language, log_printer)
+
+            show_bears(local_bears,
+                       global_bears,
+                       args.show_description or args.show_details,
+                       args.show_details,
+                       console_printer)
+
+            return 0
+        elif args.show_capabilities:
+            from coalib.collecting.Collectors import (
+                filter_capabilities_by_languages)
+            from coalib.settings.ConfigurationGathering import (
+                get_filtered_bears)
+
+            local_bears, global_bears = get_filtered_bears(
+                args.filter_by_language, log_printer)
+            capabilities = filter_capabilities_by_languages(
+                local_bears, args.show_capabilities)
+            show_language_bears_capabilities(capabilities, console_printer)
+
+            return 0
+
+    except BaseException as exception:  # pylint: disable=broad-except
+        return get_exitcode(exception, log_printer)
+
+    if args.non_interactive:
+        return mode_non_interactive(console_printer, args)
+
+    if args.format:
+        return mode_format()
+
+    return mode_normal(console_printer, log_printer)
+
+
+if __name__ == '__main__':  # pragma: no cover
+    main()

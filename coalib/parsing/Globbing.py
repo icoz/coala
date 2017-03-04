@@ -1,8 +1,9 @@
 import os
 import platform
 import re
+from functools import lru_cache
 
-from coalib.misc.Decorators import yield_once
+from coala_utils.decorators import yield_once
 from coalib.misc.Constants import GLOBBING_SPECIAL_CHARS
 
 
@@ -21,7 +22,7 @@ def _end_of_set_index(string, start_index):
     if closing_index < length and string[closing_index] == '!':
         closing_index += 1
 
-    if closing_index < length:  # the set cannot be closed by a bracket here
+    if closing_index < length:  # The set cannot be closed by a bracket here.
         closing_index += 1
 
     while closing_index < length and string[closing_index] != ']':
@@ -46,8 +47,8 @@ def glob_escape(input_string):
     :return:             Escaped string in which all the special glob characters
                          ``()[]|?*`` are escaped.
     """
-    return re.sub("(?P<char>[" + re.escape(GLOBBING_SPECIAL_CHARS) + "])",
-                  "[\\g<char>]", input_string)
+    return re.sub('(?P<char>[' + re.escape(GLOBBING_SPECIAL_CHARS) + '])',
+                  '[\\g<char>]', input_string)
 
 
 def _position_is_bracketed(string, position):
@@ -59,7 +60,7 @@ def _position_is_bracketed(string, position):
     :param position: Position of a char in string
     :return:         Whether or not the char is inside a valid set of brackets
     """
-    # allow negative positions and trim too long ones
+    # Allow negative positions and trim too long ones.
     position = len(string[:position])
 
     index, length = 0, len(string)
@@ -94,13 +95,13 @@ def _boundary_of_alternatives_indices(pattern):
     for match in re.finditer('\\)', pattern):
         if not _position_is_bracketed(pattern, match.start()):
             end_pos = match.start()
-            break  # break to get leftmost
+            break  # Break to get leftmost.
 
     start_pos = None
     for match in re.finditer('\\(', pattern[:end_pos]):
         if not _position_is_bracketed(pattern, match.start()):
             start_pos = match.end()
-            # no break to get rightmost
+            # No break to get rightmost.
 
     return start_pos, end_pos
 
@@ -139,12 +140,12 @@ def _iter_alternatives(pattern):
     if None in (start_pos, end_pos):
         yield pattern
     else:
-        # iterate through choices inside of parenthesis (separated by '|'):
+        # Iterate through choices inside of parenthesis (separated by '|'):
         for choice in _iter_choices(pattern[start_pos: end_pos]):
-            # put glob expression back together with alternative:
+            # Put glob expression back together with alternative:
             variant = pattern[:start_pos-1] + choice + pattern[end_pos+1:]
 
-            # iterate through alternatives outside of parenthesis
+            # Iterate through alternatives outside of parenthesis.
             # (pattern can have more alternatives elsewhere)
             for glob_pattern in _iter_alternatives(variant):
                 yield glob_pattern
@@ -166,13 +167,13 @@ def translate(pattern):
             # '**' matches everything
             if index < length and pattern[index] == '*':
                 regex += '.*'
-            # on Windows, '*' matches everything but the filesystem
+            # On Windows, '*' matches everything but the filesystem
             # separators '/' and '\'.
-            elif platform.system() == 'Windows':  # pragma: nocover (Windows)
+            elif platform.system() == 'Windows':  # pragma posix: no cover
                 regex += '[^/\\\\]*'
-            # on all other (~Unix-) platforms, '*' matches everything but the
+            # On all other (~Unix-) platforms, '*' matches everything but the
             # filesystem separator, most likely '/'.
-            else:
+            else:  # pragma nt: no cover
                 regex += '[^' + re.escape(os.sep) + ']*'
         elif char == '?':
             regex += '.'
@@ -193,13 +194,13 @@ def translate(pattern):
     return regex + '\\Z(?ms)'
 
 
-def fnmatch(name, patterns):
+def fnmatch(name, globs):
     """
-    Tests whether name matches pattern
+    Tests whether name matches one of the given globs.
 
-    :param name:     File or directory name
-    :param patterns: Glob string with wildcards or list of globs
-    :return:         Boolean: Whether or not name is matched by pattern
+    :param name:  File or directory name
+    :param globs: Glob string with wildcards or list of globs
+    :return:      Boolean: Whether or not name is matched by glob
 
     Glob Syntax:
 
@@ -213,20 +214,23 @@ def fnmatch(name, patterns):
     -  '*':             Matches everything but os.sep.
     -  '**':            Matches everything.
     """
-    if isinstance(patterns, str):
-        patterns = [patterns]
-    if len(patterns) == 0:
+    globs = (globs,) if isinstance(globs, str) else tuple(globs)
+
+    if len(globs) == 0:
         return True
 
     name = os.path.normcase(name)
-    for pattern in patterns:
-        for pat in _iter_alternatives(pattern):
-            pat = os.path.expanduser(pat)
-            pat = os.path.normcase(pat)
-            match = re.compile(translate(pat)).match
-            if match(name) is not None:
-                return True
-    return False
+
+    return any(compiled_pattern.match(name)
+               for glob in globs
+               for compiled_pattern in _compile_pattern(glob))
+
+
+@lru_cache()
+def _compile_pattern(pattern):
+    return tuple(re.compile(translate(os.path.normcase(
+                     os.path.expanduser(pat))))
+                 for pat in _iter_alternatives(pattern))
 
 
 def _absolute_flat_glob(pattern):
@@ -242,7 +246,7 @@ def _absolute_flat_glob(pattern):
         if os.path.exists(pattern):
             yield pattern
     else:
-        # Patterns ending with a slash should match only directories
+        # Patterns ending with a slash should match only directories.
         if os.path.isdir(dirname):
             yield pattern
     return
@@ -280,7 +284,10 @@ def relative_wildcard_glob(dirname, pattern):
     if not dirname:
         dirname = os.curdir
     try:
-        names = os.listdir(dirname)
+        if '**' in pattern:
+            names = list(_iter_relative_dirs(dirname))
+        else:
+            names = os.listdir(dirname)
     except OSError:
         return []
     result = []
@@ -336,6 +343,38 @@ def has_wildcard(pattern):
     return match is not None
 
 
+def _iglob(pattern):
+    dirname, basename = os.path.split(pattern)
+    if not has_wildcard(pattern):
+        for file in _absolute_flat_glob(pattern):
+            yield file
+        return
+
+    if basename == '**':
+        relative_glob_function = relative_recursive_glob
+    elif has_wildcard(basename):
+        relative_glob_function = relative_wildcard_glob
+    else:
+        relative_glob_function = relative_flat_glob
+
+    if not dirname:
+        for file in relative_glob_function(dirname, basename):
+            yield file
+        return
+
+    # Prevent an infinite recursion if a drive or UNC path contains
+    # wildcard characters (i.e. r'\\?\C:').
+    if dirname != pattern and has_wildcard(dirname):
+        dirs = iglob(dirname)
+    else:
+        dirs = [dirname]
+
+    for dirname in dirs:
+        for name in relative_glob_function(dirname, basename):
+            yield os.path.join(dirname, name)
+
+
+@yield_once
 def iglob(pattern):
     """
     Iterates all filesystem paths that get matched by the glob pattern.
@@ -347,34 +386,13 @@ def iglob(pattern):
     for pat in _iter_alternatives(pattern):
         pat = os.path.expanduser(pat)
         pat = os.path.normcase(pat)
-        dirname, basename = os.path.split(pat)
-        if not has_wildcard(pat):
-            for file in _absolute_flat_glob(pat):
-                yield file
-            return
 
-        if basename == '**':
-            relative_glob_function = relative_recursive_glob
-        elif has_wildcard(basename):
-            relative_glob_function = relative_wildcard_glob
+        if pat.endswith(os.sep):
+            for name in _iglob(pat):
+                yield name
         else:
-            relative_glob_function = relative_flat_glob
-
-        if not dirname:
-            for file in relative_glob_function(dirname, basename):
-                yield file
-            return
-
-        # Prevent an infinite recursion if a drive or UNC path contains
-        # wildcard characters (i.e. r'\\?\C:').
-        if dirname != pat and has_wildcard(dirname):
-            dirs = iglob(dirname)
-        else:
-            dirs = [dirname]
-
-        for dirname in dirs:
-            for name in relative_glob_function(dirname, basename):
-                yield os.path.join(dirname, name)
+            for name in _iglob(pat):
+                yield name.rstrip(os.sep)
 
 
 def glob(pattern):

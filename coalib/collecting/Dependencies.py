@@ -8,7 +8,7 @@ class CircularDependencyError(Exception):
         """
         bear_names = [bear.name for bear in bears]
 
-        return cls("Circular dependency detected: " + " -> ".join(bear_names))
+        return cls('Circular dependency detected: ' + ' -> '.join(bear_names))
 
 
 def _resolve(bears, resolved_bears, seen):
@@ -17,7 +17,7 @@ def _resolve(bears, resolved_bears, seen):
             continue
 
         missing = bear.missing_dependencies(resolved_bears)
-        if missing == []:
+        if not missing:
             resolved_bears.append(bear)
             continue
 

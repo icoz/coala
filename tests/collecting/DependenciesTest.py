@@ -4,60 +4,50 @@ from coalib.bears.Bear import Bear
 from coalib.collecting import Dependencies
 
 
-class BearWithoutDeps(Bear):
-
-    @staticmethod
-    def get_dependencies():
-        return []
-
-
 class ResolvableBear1(Bear):
 
-    @staticmethod
-    def get_dependencies():
-        return [BearWithoutDeps]
+    BEAR_DEPS = {Bear}
 
 
 class ResolvableBear2(Bear):
 
-    @staticmethod
-    def get_dependencies():
-        return [ResolvableBear1, BearWithoutDeps]
+    BEAR_DEPS = {ResolvableBear1, Bear}
 
 
 class UnresolvableBear1(Bear):
 
-    @staticmethod
-    def get_dependencies():
-        return [ResolvableBear1, BearWithoutDeps, UnresolvableBear3]
+    BEAR_DEPS = {ResolvableBear1, Bear}
 
 
 class UnresolvableBear2(Bear):
 
-    @staticmethod
-    def get_dependencies():
-        return [ResolvableBear1, BearWithoutDeps, UnresolvableBear1]
+    BEAR_DEPS = {ResolvableBear1, Bear, UnresolvableBear1}
 
 
 class UnresolvableBear3(Bear):
 
-    @staticmethod
-    def get_dependencies():
-        return [ResolvableBear1, BearWithoutDeps, UnresolvableBear2]
+    BEAR_DEPS = {ResolvableBear1, Bear, UnresolvableBear2}
 
 
 class DependenciesTest(unittest.TestCase):
 
+    def setUp(self):
+        # We can set this attribute properly only after UnresolvableBear3 is
+        # declared.
+        setattr(UnresolvableBear1, 'BEAR_DEPS', {ResolvableBear1,
+                                                 Bear,
+                                                 UnresolvableBear3})
+
     def test_no_deps(self):
         self.assertEqual(
-            len(Dependencies.resolve([BearWithoutDeps,
-                                      BearWithoutDeps])),
+            len(Dependencies.resolve([Bear,
+                                      Bear])),
             1)
 
     def test_resolvable_deps(self):
         self.assertEqual(Dependencies.resolve([ResolvableBear1,
                                                ResolvableBear2]),
-                         [BearWithoutDeps, ResolvableBear1, ResolvableBear2])
+                         [Bear, ResolvableBear1, ResolvableBear2])
 
     def test_unresolvable_deps(self):
         self.assertRaises(
